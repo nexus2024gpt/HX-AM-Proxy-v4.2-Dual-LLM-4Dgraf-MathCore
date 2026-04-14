@@ -1,0 +1,1650 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HX-AM Proxy v4</title>
+<script src="https://unpkg.com/3d-force-graph@1.70.10/dist/3d-force-graph.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Courier New',monospace;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#e2e8f0;padding:2rem;min-height:100vh}
+.container{max-width:1400px;margin:0 auto}
+h1{color:#6366f1;margin-bottom:.5rem;font-size:2rem}
+.subtitle{color:#94a3b8;margin-bottom:2rem;font-size:.9rem}
+
+/* Tabs */
+.tabs{display:flex;gap:.5rem;margin-bottom:2rem;border-bottom:2px solid #334155;flex-wrap:wrap}
+.tab-button{background:transparent;border:none;color:#94a3b8;padding:.75rem 1.5rem;cursor:pointer;font-size:1rem;font-family:inherit;font-weight:600;transition:all .3s;border-bottom:3px solid transparent}
+.tab-button:hover{color:#e2e8f0}
+.tab-button.active{color:#6366f1;border-bottom-color:#6366f1}
+.tab-content{display:none;animation:fadeIn .3s}
+.tab-content.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+/* Query */
+textarea{width:100%;height:120px;background:#1e293b;border:2px solid #475569;color:#fff;padding:1rem;font-family:inherit;font-size:.95rem;resize:vertical;border-radius:8px;transition:border-color .2s}
+textarea:focus{outline:none;border-color:#6366f1}
+
+/* RAG */
+#rag-block{display:none;background:rgba(99,102,241,.07);border:1px solid #6366f133;border-radius:10px;padding:1rem;margin:.75rem 0}
+#rag-block.visible{display:block;animation:fadeIn .3s}
+.rag-title{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:#6366f1;margin-bottom:.6rem}
+.rag-item{background:#1e293b;border-radius:6px;padding:.5rem .75rem;margin-bottom:.4rem;border-left:3px solid #6366f1;font-size:.8rem}
+.rag-domain{display:inline-block;background:#6366f122;color:#818cf8;border-radius:4px;padding:.1rem .4rem;font-size:.7rem;margin-bottom:.25rem}
+.rag-sim{float:right;color:#64748b;font-size:.7rem}
+.rag-text{color:#cbd5e1;line-height:1.4}
+
+.submit-btn{background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);color:#fff;border:none;padding:.75rem 2rem;cursor:pointer;margin:.75rem 0;font-size:1rem;border-radius:8px;font-weight:600;transition:transform .2s}
+.submit-btn:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(99,102,241,.4)}
+.submit-btn:disabled{background:#64748b;cursor:not-allowed;transform:none}
+.loading{display:none;color:#6366f1;margin:1rem 0;padding:1rem;background:rgba(99,102,241,.1);border-radius:8px}
+.loading.active{display:block;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+
+/* Pipeline */
+.pipeline{display:flex;gap:1rem;flex-wrap:wrap;margin-top:1.5rem}
+.panel{flex:1;min-width:280px;background:#1e293b;border-radius:12px;border-left:4px solid #6366f1;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,.3)}
+.panel h3{background:#334155;padding:.75rem;margin:0;font-size:1rem;color:#cbd5e1}
+.panel pre{padding:1rem;margin:0;font-size:.85rem;white-space:pre-wrap;word-wrap:break-word;color:#e2e8f0;max-height:300px;overflow-y:auto}
+
+/* History & Artifacts */
+.list-toolbar{display:flex;align-items:center;gap:.5rem;margin-bottom:.75rem;flex-wrap:wrap}
+.sort-btn{background:#1e293b;border:1px solid #475569;color:#94a3b8;padding:.35rem .75rem;border-radius:6px;cursor:pointer;font-size:.78rem;font-family:inherit;transition:all .2s}
+.sort-btn:hover,.sort-btn.active{border-color:#6366f1;color:#a5b4fc;background:#6366f122}
+.history-list,.artifacts-list{max-height:600px;overflow-y:auto}
+.history-item,.artifact-item{background:#1e293b;padding:.75rem;margin-bottom:.75rem;border-radius:8px;border-left:3px solid #475569;cursor:pointer;transition:all .2s;position:relative}
+.history-item:hover,.artifact-item:hover{border-left-color:#6366f1;background:#2d3a52}
+.history-timestamp{font-size:.7rem;color:#94a3b8;margin-bottom:.25rem;display:flex;justify-content:space-between;align-items:center}
+.history-query{font-weight:bold;margin-bottom:.25rem;font-size:.9rem}
+.history-meta{font-size:.7rem;color:#4ade80}
+.artifact-row{display:flex;align-items:flex-start;gap:.6rem}
+.artifact-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:4px}
+.artifact-info{flex:1;min-width:0}
+.artifact-name{font-family:monospace;color:#fbbf24;font-size:.82rem;display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.artifact-id-badge{background:#1e3a5f;color:#60a5fa;border-radius:4px;padding:.08rem .35rem;font-size:.65rem}
+.artifact-meta{font-size:.72rem;color:#64748b;margin-top:.2rem}
+.artifact-hypothesis{font-size:.78rem;color:#cbd5e1;margin-top:.2rem;line-height:1.4}
+.artifact-actions{display:flex;gap:.35rem;flex-shrink:0}
+.act-btn{background:transparent;border:1px solid #334155;color:#64748b;padding:.2rem .45rem;border-radius:4px;cursor:pointer;font-size:.68rem;font-family:inherit;transition:all .2s}
+.act-btn:hover{border-color:#6366f1;color:#a5b4fc}
+.act-btn.danger{border-color:#ef4444;color:#ef4444}
+.act-btn.danger:hover{background:#ef444422}
+
+.refresh-btn{background:#475569;color:#fff;border:none;padding:.5rem 1rem;border-radius:6px;cursor:pointer;margin-right:.5rem}
+.refresh-btn:hover{background:#64748b}
+
+/* GRAPH */
+.graph-toolbar{display:flex;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap}
+.graph-layout{display:grid;grid-template-columns:1fr 310px;gap:1rem;height:680px}
+#graph-container{background:#060d18;border:1px solid #1e3a5f;border-radius:12px;position:relative;overflow:hidden}
+.graph-sidebar{display:flex;flex-direction:column;gap:.75rem;overflow-y:auto}
+.graph-stats{background:#1e293b;border-radius:10px;padding:1rem;border:1px solid #334155}
+.graph-stats h4,.graph-legend h4,.node-detail h4{color:#6366f1;font-size:.8rem;margin-bottom:.75rem;letter-spacing:.06em;text-transform:uppercase}
+.stat-row{display:flex;justify-content:space-between;align-items:center;padding:.3rem 0;border-bottom:1px solid #1e3a5f}
+.stat-row:last-child{border-bottom:none}
+.stat-label{color:#64748b;font-size:.78rem}
+.stat-value{color:#e2e8f0;font-weight:bold;font-size:.82rem}
+.graph-legend{background:#1e293b;border-radius:10px;padding:1rem;border:1px solid #334155}
+.legend-item{display:flex;align-items:center;gap:.4rem;margin-bottom:.35rem;font-size:.76rem;color:#94a3b8}
+.legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.legend-dash{width:18px;height:3px;border-radius:2px;flex-shrink:0;opacity:.85}
+.legend-sep{border-top:1px solid #1e3a5f;margin:.4rem 0}
+.legend-small{font-size:.68rem;color:#475569;margin-top:.15rem}
+.node-detail{background:#1e293b;border-radius:10px;padding:1rem;border:1px solid #334155;flex:1;min-height:0;overflow-y:auto}
+.node-detail-empty{color:#475569;font-size:.8rem;font-style:italic}
+.detail-field{margin-bottom:.55rem}
+.detail-key{font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.15rem}
+.detail-val{font-size:.8rem;color:#e2e8f0;word-break:break-all}
+.detail-badge{display:inline-block;padding:.12rem .45rem;border-radius:20px;font-size:.68rem;font-weight:bold}
+#graph-phase-badge{font-size:.8rem;color:#64748b}
+#graph-phase-badge.sigma{color:#64748b;animation:pulse 2s infinite}
+
+/* Modals */
+.modal{display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,.8)}
+.modal-content{background:#1e293b;margin:5% auto;padding:20px;border:1px solid #6366f1;border-radius:12px;width:80%;max-width:900px;max-height:80%;overflow-y:auto}
+.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem}
+.modal-header h2{margin:0}
+.modal-actions{display:flex;gap:.5rem}
+.close{font-size:28px;font-weight:bold;cursor:pointer;color:#aaa;background:none;border:none}
+.close:hover{color:#fff}
+pre{white-space:pre-wrap;word-wrap:break-word}
+
+/* Mode buttons */
+.mode-btn{background:#1e293b;border:1px solid #475569;color:#94a3b8;padding:.4rem .9rem;border-radius:6px;cursor:pointer;font-size:.8rem;font-family:inherit;transition:all .2s}
+.mode-btn:hover{border-color:#6366f1;color:#e2e8f0}
+.mode-btn.active{background:#6366f122;border-color:#6366f1;color:#6366f1}
+.mode-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* Clarify panel */
+#clarify-panel{display:none;background:rgba(251,191,36,.07);border:1px solid #fbbf2433;border-radius:10px;padding:.85rem;margin-bottom:.75rem}
+.clarify-label{font-size:.72rem;color:#fbbf24;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.6rem}
+.clarify-select{width:100%;background:#1e293b;color:#e2e8f0;border:1px solid #475569;padding:.5rem;border-radius:6px;font-size:.85rem;font-family:inherit}
+#clarify-detail{margin-top:.6rem;font-size:.78rem;color:#94a3b8;display:none}
+.clarify-gen-btn{margin-top:.6rem;background:#fbbf2422;color:#fbbf24;border:1px solid #fbbf2444;padding:.4rem .9rem;border-radius:6px;cursor:pointer;font-size:.8rem}
+
+/* REF update notification */
+#ref-update-notice{display:none;background:rgba(74,222,128,.08);border:1px solid #4ade8044;border-radius:8px;padding:.75rem 1rem;margin:.5rem 0;font-size:.82rem;color:#4ade80}
+
+/* Tracker */
+#trackerBtn{position:fixed;top:1.25rem;right:1.5rem;z-index:500;background:linear-gradient(135deg,#0f172a,#1e293b);border:1px solid #334155;border-radius:10px;color:#94a3b8;padding:.5rem .85rem;cursor:pointer;font-size:.85rem;font-family:inherit;transition:all .25s;display:flex;align-items:center;gap:.4rem}
+#trackerBtn:hover{border-color:#6366f1;color:#a5b4fc;background:#6366f111}
+#trackerBtn .tracker-dot{width:7px;height:7px;border-radius:50%;background:#4ade80;animation:pulse 2s infinite}
+#trackerBtn .tracker-dot.warn{background:#f59e0b}
+#trackerBtn .tracker-dot.error{background:#ef4444}
+
+#trackerModal{display:none;position:fixed;z-index:900;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,.75);backdrop-filter:blur(4px)}
+.tracker-modal-content{background:#0f172a;margin:2% auto;border:1px solid #334155;border-radius:16px;width:92%;max-width:1100px;max-height:92vh;overflow:hidden;display:flex;flex-direction:column}
+.tracker-header{display:flex;justify-content:space-between;align-items:center;padding:1rem 1.5rem;border-bottom:1px solid #1e293b;flex-shrink:0}
+.tracker-header h2{color:#6366f1;font-size:1.2rem;margin:0}
+.tracker-tabs{display:flex;gap:.5rem}
+.tracker-tab{background:transparent;border:1px solid #334155;color:#64748b;padding:.4rem 1rem;border-radius:6px;cursor:pointer;font-size:.82rem;font-family:inherit;transition:all .2s}
+.tracker-tab.active{background:#6366f122;border-color:#6366f1;color:#a5b4fc}
+.tracker-tab-content{display:none;padding:1.25rem 1.5rem;overflow-y:auto;flex:1}
+.tracker-tab-content.active{display:block}
+.tracker-close{background:none;border:none;color:#64748b;font-size:1.5rem;cursor:pointer;line-height:1}
+.tracker-close:hover{color:#e2e8f0}
+.summary-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;margin-bottom:1.25rem}
+.s-card{background:#1e293b;border-radius:10px;padding:.85rem 1rem;border:1px solid #334155;text-align:center}
+.s-card .s-val{font-size:1.5rem;font-weight:bold;color:#e2e8f0;line-height:1.2}
+.s-card .s-label{font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-top:.25rem}
+.s-card.green .s-val{color:#4ade80}.s-card.yellow .s-val{color:#fbbf24}.s-card.red .s-val{color:#ef4444}.s-card.blue .s-val{color:#60a5fa}
+.t-section{margin-bottom:1.25rem}
+.t-section h4{color:#6366f1;font-size:.75rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.6rem}
+.t-table{width:100%;border-collapse:collapse;font-size:.78rem}
+.t-table th{background:#1e293b;color:#64748b;padding:.45rem .6rem;text-align:left;font-weight:600;border-bottom:1px solid #334155;white-space:nowrap}
+.t-table td{padding:.4rem .6rem;border-bottom:1px solid #1e293b;color:#cbd5e1;vertical-align:middle}
+.t-table tr:hover td{background:#1e293b88}
+.t-badge{display:inline-block;padding:.1rem .35rem;border-radius:4px;font-size:.65rem;font-weight:bold}
+.t-badge.groq{background:#4ade8022;color:#4ade80}.t-badge.gemini{background:#60a5fa22;color:#60a5fa}.t-badge.hf{background:#a78bfa22;color:#a78bfa}
+.t-badge.nexus{background:#fbbf2422;color:#fbbf24}.t-badge.roman{background:#fb923c22;color:#fb923c}
+.t-badge.gen{background:#6366f122;color:#818cf8}.t-badge.ver{background:#22d3ee22;color:#22d3ee}
+.enabled-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:.3rem}
+.cfg-toolbar{display:flex;gap:.6rem;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+.cfg-btn{background:#1e293b;border:1px solid #475569;color:#94a3b8;padding:.4rem .85rem;border-radius:6px;cursor:pointer;font-size:.8rem;font-family:inherit;transition:all .2s}
+.cfg-btn:hover{border-color:#6366f1;color:#e2e8f0}
+.cfg-btn.primary{background:#6366f122;border-color:#6366f1;color:#a5b4fc}
+.cfg-btn.danger{border-color:#ef4444;color:#ef4444}
+.cfg-btn.danger:hover{background:#ef444422}
+.provider-card{background:#1e293b;border:1px solid #334155;border-radius:10px;margin-bottom:.75rem;overflow:hidden;transition:border-color .2s}
+.provider-card.disabled{opacity:.55}
+.provider-card-header{display:flex;align-items:center;gap:.75rem;padding:.7rem 1rem;cursor:pointer;user-select:none}
+.provider-card-header:hover{background:#ffffff08}
+.pc-label{flex:1;font-size:.88rem;font-weight:600;color:#e2e8f0}
+.pc-meta{font-size:.72rem;color:#64748b;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.provider-card-body{display:none;padding:.75rem 1rem 1rem;border-top:1px solid #334155}
+.provider-card-body.open{display:block}
+.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:.6rem .85rem}
+.field-grid.full{grid-template-columns:1fr}
+.f-group{display:flex;flex-direction:column;gap:.2rem}
+.f-label{font-size:.65rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em}
+.f-input{background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:.4rem .6rem;border-radius:5px;font-size:.8rem;font-family:inherit;width:100%;transition:border-color .2s}
+.f-input:focus{outline:none;border-color:#6366f1}
+select.f-input option{background:#1e293b}
+.role-checks{display:flex;gap:.75rem;align-items:center;margin-top:.2rem}
+.role-checks label{font-size:.78rem;color:#94a3b8;display:flex;align-items:center;gap:.3rem;cursor:pointer}
+.card-actions{display:flex;gap:.5rem;margin-top:.85rem;justify-content:flex-end}
+.card-btn{background:transparent;border:1px solid #334155;color:#94a3b8;padding:.3rem .7rem;border-radius:5px;cursor:pointer;font-size:.75rem;font-family:inherit;transition:all .2s}
+.card-btn:hover{border-color:#6366f1;color:#a5b4fc}
+.card-btn.danger{border-color:#ef4444;color:#ef4444}
+.card-btn.danger:hover{background:#ef444422}
+#addProviderForm{background:#1e293b;border:1px dashed #334155;border-radius:10px;padding:1rem;margin-bottom:1rem;display:none}
+#addProviderForm.open{display:block}
+
+/* Trash tab */
+.trash-item{background:#1e293b;padding:.75rem;margin-bottom:.75rem;border-radius:8px;border-left:3px solid #ef444466}
+.trash-item-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:.3rem}
+.trash-actions{display:flex;gap:.4rem}
+
+/* ── Math tab ───────────────────────────────────────────────── */
+.math-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem}
+.math-grid.wide{grid-template-columns:1fr}
+.math-card{background:#1e293b;border-radius:12px;border:1px solid #334155;overflow:hidden}
+.math-card-header{background:#0f172a;padding:.65rem 1rem;display:flex;align-items:center;gap:.5rem;border-bottom:1px solid #1e3a5f}
+.math-card-title{font-size:.78rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.07em}
+.math-card-body{padding:.85rem 1rem}
+
+/* 4D матрица */
+.four-d-grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+.four-d-layer{background:#0f172a;border-radius:8px;padding:.6rem .75rem;border-left:3px solid #334155}
+.four-d-layer.structure{border-left-color:#6366f1}
+.four-d-layer.influence{border-left-color:#f59e0b}
+.four-d-layer.dynamics{border-left-color:#4ade80}
+.four-d-layer.time{border-left-color:#22d3ee}
+.four-d-layer-title{font-size:.62rem;color:#64748b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.4rem}
+.four-d-param{display:flex;justify-content:space-between;font-size:.75rem;padding:.1rem 0;border-bottom:1px solid #1e3a5f}
+.four-d-param:last-child{border:none}
+.four-d-key{color:#94a3b8}
+.four-d-val{color:#e2e8f0;font-weight:600;font-family:monospace}
+.four-d-model-badge{display:inline-block;background:#4ade8022;color:#4ade80;border:1px solid #4ade8044;border-radius:4px;padding:.1rem .45rem;font-size:.68rem;font-weight:700;margin-top:.4rem}
+
+/* Стресс-тест */
+.stress-bar-row{display:flex;align-items:center;gap:.6rem;margin-bottom:.4rem}
+.stress-bar-label{font-size:.72rem;color:#64748b;width:90px;flex-shrink:0}
+.stress-bar-track{flex:1;height:7px;background:#0f172a;border-radius:4px;overflow:hidden}
+.stress-bar-fill{height:100%;border-radius:4px;transition:width .5s ease}
+.stress-bar-val{font-size:.72rem;color:#e2e8f0;font-family:monospace;width:42px;text-align:right;flex-shrink:0}
+.stress-items{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.4rem;margin-top:.6rem}
+.stress-item{background:#0f172a;border-radius:6px;padding:.4rem .6rem;text-align:center;font-size:.7rem}
+.stress-item-label{color:#64748b;margin-bottom:.2rem}
+.stress-item-val{font-weight:700;font-family:monospace}
+.stress-run-btn{background:linear-gradient(135deg,#4ade80 0%,#22d3ee 100%);color:#0f172a;border:none;padding:.55rem 1.25rem;border-radius:7px;cursor:pointer;font-size:.85rem;font-weight:700;transition:transform .15s,box-shadow .15s;margin-top:.75rem}
+.stress-run-btn:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(74,222,128,.35)}
+.stress-run-btn:disabled{background:#334155;color:#64748b;cursor:not-allowed;transform:none}
+.stress-running{color:#4ade80;font-size:.8rem;animation:pulse 1.2s infinite}
+
+/* Insights */
+.insight-item{background:#0f172a;border-radius:8px;padding:.7rem .85rem;margin-bottom:.55rem;border-left:3px solid #334155;cursor:pointer;transition:border-color .2s}
+.insight-item:hover{border-left-color:#6366f1}
+.insight-item.high{border-left-color:#4ade80}
+.insight-item.plausible{border-left-color:#f59e0b}
+.insight-item.speculative{border-left-color:#ef4444}
+.insight-prob{font-size:1.15rem;font-weight:800;font-family:monospace}
+.insight-domains{font-size:.72rem;color:#94a3b8;margin-bottom:.2rem}
+.insight-meta{font-size:.68rem;color:#475569;margin-top:.25rem}
+.prob-badge{display:inline-block;padding:.15rem .5rem;border-radius:20px;font-size:.68rem;font-weight:700}
+.prob-badge.high{background:#4ade8022;color:#4ade80;border:1px solid #4ade8044}
+.prob-badge.plausible{background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44}
+.prob-badge.speculative{background:#ef444422;color:#ef4444;border:1px solid #ef444444}
+.prob-badge.low{background:#47556922;color:#64748b;border:1px solid #47556944}
+
+/* Math stats bar */
+.math-stats-bar{display:flex;gap:.75rem;margin-bottom:1rem;flex-wrap:wrap}
+.math-stat-pill{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:.4rem .75rem;font-size:.75rem;display:flex;align-items:center;gap:.4rem}
+.math-stat-pill .msv{font-weight:700;color:#e2e8f0}
+.math-stat-pill .msl{color:#64748b}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🔮 HX-AM Proxy v4</h1>
+<p class="subtitle">Dual-LLM: Generator (Groq) + Verifier (Gemini) | Invariant Engine | 3D Graph | RAG</p>
+
+<button id="trackerBtn" onclick="openTracker()">
+  <span class="tracker-dot" id="trackerStatusDot"></span>
+  📊 API Tracker
+</button>
+
+<div class="tabs">
+  <button class="tab-button active" onclick="switchTab('query',this)">💬 Запрос</button>
+  <button class="tab-button" onclick="switchTab('graph',this)">🕸️ Граф 3D</button>
+  <button class="tab-button" onclick="switchTab('history',this)">📜 История</button>
+  <button class="tab-button" onclick="switchTab('artifacts',this)">📦 Артефакты</button>
+  <button class="tab-button" onclick="switchTab('quarantine',this)">🚫 Карантин</button>
+  <button class="tab-button" onclick="switchTab('trash',this)">🗑️ Корзина</button>
+  <button class="tab-button" onclick="switchTab('math',this)">📐 Math</button>
+</div>
+
+<!-- ЗАПРОС -->
+<div id="query-tab" class="tab-content active">
+  <div id="mode-bar" style="display:flex;gap:.5rem;margin-bottom:.75rem;flex-wrap:wrap;align-items:center">
+    <span style="font-size:.75rem;color:#64748b;margin-right:.25rem">Режим:</span>
+    <button class="mode-btn active" id="btn-manual" onclick="setMode('manual')">✏️ Ручной ввод</button>
+    <button class="mode-btn" id="btn-novel" onclick="setMode('novel')">🎲 Новый вопрос</button>
+    <button class="mode-btn" id="btn-clarify" onclick="setMode('clarify')">🔧 Уточнить артефакт</button>
+    <span id="mode-status" style="font-size:.72rem;color:#94a3b8;margin-left:.5rem"></span>
+  </div>
+
+  <div id="clarify-panel">
+    <div class="clarify-label">🔧 Выберите артефакт для уточнения (все артефакты)</div>
+    <select id="clarify-select" class="clarify-select">
+      <option value="">— Загрузка артефактов...</option>
+    </select>
+    <div id="clarify-detail"></div>
+    <button class="clarify-gen-btn" onclick="generateClarification()">🔧 Сгенерировать уточняющий вопрос</button>
+  </div>
+
+  <textarea id="queryText" placeholder="Введите запрос... Используйте [REF:artifact_id] для уточнения артефакта — он будет обновлён автоматически."></textarea>
+
+  <div id="rag-block">
+    <div class="rag-title">🧠 Система помнит — релевантные инварианты из базы знаний</div>
+    <div id="rag-items"></div>
+  </div>
+
+  <div id="ref-update-notice">
+    ✅ Артефакт <strong id="ref-update-id"></strong> автоматически обновлён результатами запроса. История предыдущей версии сохранена внутри артефакта.
+  </div>
+
+  <button class="submit-btn" id="submitBtn" onclick="sendQuery()">🚀 Отправить</button>
+  <div id="loading" class="loading">⏳ Генерация и верификация...</div>
+  <div id="pipeline" class="pipeline"></div>
+</div>
+
+<!-- ГРАФ 3D -->
+<div id="graph-tab" class="tab-content">
+  <div class="graph-toolbar">
+    <button class="refresh-btn" onclick="loadGraph()">🔄 Обновить граф</button>
+    <span id="graph-phase-badge">—</span>
+  </div>
+  <div class="graph-layout">
+    <div id="graph-container"></div>
+    <div class="graph-sidebar">
+      <div class="graph-stats">
+        <h4>📊 Статистика</h4>
+        <div class="stat-row"><span class="stat-label">Узлов</span><span class="stat-value" id="stat-nodes">—</span></div>
+        <div class="stat-row"><span class="stat-label">Рёбер</span><span class="stat-value" id="stat-edges">—</span></div>
+        <div class="stat-row"><span class="stat-label">Кластеров</span><span class="stat-value" id="stat-clusters">—</span></div>
+        <div class="stat-row"><span class="stat-label">Мостов</span><span class="stat-value" id="stat-bridges">—</span></div>
+      </div>
+      <div class="graph-legend">
+        <h4>🎨 Легенда узлов</h4>
+        <div class="legend-item"><div class="legend-dot" style="background:#4ade80"></div><div class="legend-dash" style="background:#4ade80"></div>stable_cluster</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#6366f1"></div><div class="legend-dash" style="background:#6366f1"></div>hyx-portal / bridge</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div><div class="legend-dash" style="background:#f59e0b"></div>weak_pattern / mixed</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div><div class="legend-dash" style="background:#ef4444"></div>noise / isolated</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#94a3b8"></div><div class="legend-dash" style="background:#94a3b8"></div>sigma_primitive</div>
+        <div class="legend-sep"></div>
+        <h4>🔗 Вес рёбер</h4>
+        <div class="legend-item"><div class="legend-dash" style="background:#3b82f6;width:22px;height:2px"></div><div class="legend-dash" style="background:#f59e0b;width:22px;height:3px"></div><div class="legend-dash" style="background:#ef4444;width:22px;height:5px"></div><span style="font-size:.7rem;margin-left:.25rem">низкий → высокий</span></div>
+        <div class="legend-small" style="margin-top:.3rem">Размер узла = b_sync &nbsp;|&nbsp; Толщина/цвет = weight</div>
+      </div>
+      <div class="node-detail" id="node-detail">
+        <h4>🔍 Узел</h4>
+        <div class="node-detail-empty">Нажмите на узел для просмотра деталей</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ИСТОРИЯ -->
+<div id="history-tab" class="tab-content">
+  <div class="list-toolbar">
+    <button class="refresh-btn" onclick="loadHistory()">🔄 Обновить</button>
+    <button class="sort-btn active" id="hist-sort-desc" onclick="setSortHistory('desc')">↓ Новые сначала</button>
+    <button class="sort-btn" id="hist-sort-asc" onclick="setSortHistory('asc')">↑ Старые сначала</button>
+  </div>
+  <div id="history-list" class="history-list">Загрузка...</div>
+</div>
+
+<!-- АРТЕФАКТЫ -->
+<div id="artifacts-tab" class="tab-content">
+  <div class="list-toolbar">
+    <button class="refresh-btn" onclick="loadArtifacts()">🔄 Обновить</button>
+    <button class="sort-btn active" id="art-sort-new" onclick="setSortArtifacts('new')">↓ Новые</button>
+    <button class="sort-btn" id="art-sort-old" onclick="setSortArtifacts('old')">↑ Старые</button>
+    <button class="sort-btn" id="art-sort-bsync" onclick="setSortArtifacts('bsync')">b_sync ↓</button>
+    <button class="sort-btn" id="art-sort-domain" onclick="setSortArtifacts('domain')">A→Z домен</button>
+  </div>
+  <div id="artifacts-list" class="artifacts-list">Загрузка...</div>
+</div>
+
+<!-- КАРАНТИН -->
+<div id="quarantine-tab" class="tab-content">
+  <button class="refresh-btn" onclick="loadQuarantine()">🔄 Обновить</button>
+  <div id="quarantine-list" class="history-list">Загрузка...</div>
+</div>
+
+<!-- КОРЗИНА -->
+<div id="trash-tab" class="tab-content">
+  <div class="list-toolbar">
+    <button class="refresh-btn" onclick="loadTrash()">🔄 Обновить</button>
+    <span style="font-size:.75rem;color:#64748b">Удалённые артефакты. Восстановление возможно до окончательного удаления.</span>
+  </div>
+  <div id="trash-list">Загрузка...</div>
+</div>
+  <!-- MATH TAB -->
+  <div id="math-tab" class="tab-content">
+
+    <div id="math-stats-bar" class="math-stats-bar">
+      <div class="math-stat-pill"><span class="msv" id="ms-indexed">—</span><span class="msl">4D indexed</span></div>
+      <div class="math-stat-pill"><span class="msv" id="ms-sims">—</span><span class="msl">стресс-тестов</span></div>
+      <div class="math-stat-pill"><span class="msv" id="ms-insights">—</span><span class="msl">инсайтов</span></div>
+      <button class="refresh-btn" onclick="loadMathStats()" style="margin-left:auto">🔄 Обновить</button>
+    </div>
+
+    <div class="math-grid">
+      <div>
+        <div class="math-card" id="four-d-card">
+          <div class="math-card-header">
+            <span>🧮</span>
+            <span class="math-card-title">4D матрица последнего запроса</span>
+            <span id="four-d-model-pill" style="margin-left:auto"></span>
+          </div>
+          <div class="math-card-body">
+            <div id="four-d-empty" style="color:#475569;font-size:.8rem;font-style:italic">
+              Отправьте запрос — здесь появится 4D-матрица из ответа генератора.
+            </div>
+            <div id="four-d-matrix-display" style="display:none">
+              <div class="four-d-grid">
+                <div class="four-d-layer structure">
+                  <div class="four-d-layer-title">🏗 Структура</div>
+                  <div class="four-d-param"><span class="four-d-key">C</span><span class="four-d-val" id="fd-C">—</span></div>
+                  <div class="four-d-param"><span class="four-d-key">k</span><span class="four-d-val" id="fd-k">—</span></div>
+                  <div class="four-d-param"><span class="four-d-key">D</span><span class="four-d-val" id="fd-D">—</span></div>
+                </div>
+                <div class="four-d-layer influence">
+                  <div class="four-d-layer-title">⚡ Факторы</div>
+                  <div class="four-d-param"><span class="four-d-key">h</span><span class="four-d-val" id="fd-h">—</span></div>
+                  <div class="four-d-param"><span class="four-d-key">T</span><span class="four-d-val" id="fd-T">—</span></div>
+                  <div class="four-d-param"><span class="four-d-key">η</span><span class="four-d-val" id="fd-eta">—</span></div>
+                </div>
+                <div class="four-d-layer dynamics">
+                  <div class="four-d-layer-title">🌀 Динамика</div>
+                  <div class="four-d-param"><span class="four-d-key">ω_i</span><span class="four-d-val" id="fd-omega">—</span></div>
+                  <div class="four-d-param"><span class="four-d-key">K</span><span class="four-d-val" id="fd-K">—</span></div>
+                  <div class="four-d-param"><span class="four-d-key">K_c</span><span class="four-d-val" id="fd-Kc">—</span></div>
+                  <div class="four-d-param"><span class="four-d-key">p</span><span class="four-d-val" id="fd-p">—</span></div>
+                </div>
+                <div class="four-d-layer time">
+                  <div class="four-d-layer-title">⏱ Время</div>
+                  <div class="four-d-param"><span class="four-d-key">τ</span><span class="four-d-val" id="fd-tau">—</span></div>
+                  <div class="four-d-param"><span class="four-d-key">H</span><span class="four-d-val" id="fd-H">—</span></div>
+                  <div class="four-d-param"><span class="four-d-key">freq</span><span class="four-d-val" id="fd-freq">—</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="math-card" style="margin-top:1rem">
+          <div class="math-card-header">
+            <span>🔬</span>
+            <span class="math-card-title">Стресс-тест артефакта</span>
+          </div>
+          <div class="math-card-body">
+            <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+              <input id="stress-artifact-id" type="text" placeholder="artifact_id (12 симв.)"
+                style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:.45rem .7rem;border-radius:6px;font-size:.83rem;font-family:monospace;flex:1;min-width:140px">
+              <button class="stress-run-btn" id="stress-run-btn" onclick="runStressTest()">
+                ▶ Запустить
+              </button>
+            </div>
+            <div id="stress-running" class="stress-running" style="display:none;margin-top:.5rem">
+              ⏳ Симуляция Kuramoto...
+            </div>
+            <div id="stress-result" style="display:none;margin-top:.75rem">
+              <div class="stress-bar-row">
+                <span class="stress-bar-label">stability score</span>
+                <div class="stress-bar-track"><div class="stress-bar-fill" id="stress-score-bar" style="width:0%;background:#4ade80"></div></div>
+                <span class="stress-bar-val" id="stress-score-val">—</span>
+              </div>
+              <div class="stress-bar-row">
+                <span class="stress-bar-label">λ_max</span>
+                <div class="stress-bar-track"><div class="stress-bar-fill" id="stress-lya-bar" style="width:50%;background:#6366f1"></div></div>
+                <span class="stress-bar-val" id="stress-lya-val">—</span>
+              </div>
+              <div class="stress-items" id="stress-items-grid"></div>
+              <div id="stress-boundaries" style="margin-top:.6rem;font-size:.75rem;color:#94a3b8;line-height:1.7"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="math-card" style="height:100%">
+          <div class="math-card-header">
+            <span>💡</span>
+            <span class="math-card-title">Вероятностные инсайты</span>
+            <select id="insights-filter" onchange="loadInsights()"
+              style="margin-left:auto;background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:.2rem .5rem;border-radius:5px;font-size:.72rem">
+              <option value="all">все</option>
+              <option value="monitoring">monitoring</option>
+              <option value="high_confidence">high</option>
+            </select>
+          </div>
+          <div class="math-card-body" id="insights-list" style="max-height:540px;overflow-y:auto">
+            <div style="color:#475569;font-size:.8rem;font-style:italic">
+              Инсайты появятся после запросов с 4D-матрицей.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="math-current-result" style="display:none;margin-top:1rem">
+      <div class="math-card">
+        <div class="math-card-header">
+          <span>📊</span>
+          <span class="math-card-title">Результат MathCore последнего запроса</span>
+          <span id="math-current-id" style="margin-left:auto;font-family:monospace;font-size:.7rem;color:#475569"></span>
+        </div>
+        <div class="math-card-body">
+          <div id="math-current-body"></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /math-tab -->
+</div><!-- /container -->
+
+<!-- ARTIFACT MODAL -->
+<div id="artifactModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>📄 Артефакт <span id="modal-art-id" style="font-size:.8rem;color:#64748b;font-weight:normal"></span></h2>
+      <div class="modal-actions">
+        <button class="cfg-btn danger" id="modal-delete-btn" onclick="deleteCurrentArtifact()">🗑 В корзину</button>
+        <button class="close" onclick="closeModal()">×</button>
+      </div>
+    </div>
+    <pre id="artifactContent">Загрузка...</pre>
+  </div>
+</div>
+
+<!-- TRACKER MODAL -->
+<div id="trackerModal">
+  <div class="tracker-modal-content">
+    <div class="tracker-header">
+      <h2>📊 API Usage Tracker</h2>
+      <div style="display:flex;align-items:center;gap:1rem">
+        <div class="tracker-tabs">
+          <button class="tracker-tab active" onclick="switchTrackerTab('dashboard',this)">📈 Дашборд</button>
+          <button class="tracker-tab" onclick="switchTrackerTab('settings',this)">⚙️ Провайдеры</button>
+        </div>
+        <button class="tracker-close" onclick="closeTracker()">✕</button>
+      </div>
+    </div>
+    <div id="tracker-dashboard" class="tracker-tab-content active">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.85rem">
+        <span style="font-size:.72rem;color:#64748b" id="tracker-date">—</span>
+        <div style="display:flex;gap:.5rem">
+          <button class="cfg-btn" onclick="loadTrackerStats()">🔄 Обновить</button>
+          <button class="cfg-btn" onclick="resetStats('today')">↺ Сброс сегодня</button>
+          <button class="cfg-btn danger" onclick="resetStats('all')">🗑 Сбросить всё</button>
+        </div>
+      </div>
+      <div class="summary-cards">
+        <div class="s-card green"><div class="s-val" id="sc-req-today">—</div><div class="s-label">Запросов сегодня</div></div>
+        <div class="s-card blue"><div class="s-val" id="sc-tokens-today">—</div><div class="s-label">Токенов сегодня</div></div>
+        <div class="s-card red"><div class="s-val" id="sc-errors-today">—</div><div class="s-label">Ошибок сегодня</div></div>
+        <div class="s-card yellow"><div class="s-val" id="sc-active">—</div><div class="s-label">Активных провайдеров</div></div>
+      </div>
+      <div class="t-section">
+        <h4>🏦 По аккаунтам</h4>
+        <table class="t-table"><thead><tr><th>Провайдер</th><th>Аккаунт</th><th>Ключей</th><th>Запросов (день)</th><th>Токенов (день)</th><th>Ошибок (день)</th><th>Всего</th></tr></thead><tbody id="acc-table-body"></tbody></table>
+      </div>
+      <div class="t-section">
+        <h4>🔑 По провайдерам (детально)</h4>
+        <table class="t-table"><thead><tr><th>Провайдер</th><th>Роль</th><th>Модель</th><th>Req (день)</th><th>Вх. токены</th><th>Исх. токены</th><th>Ошибки</th><th>Последний вызов</th><th>Статус</th></tr></thead><tbody id="prov-table-body"></tbody></table>
+      </div>
+    </div>
+    <div id="tracker-settings" class="tracker-tab-content">
+      <div class="cfg-toolbar">
+        <button class="cfg-btn primary" onclick="saveAllProviders()">💾 Сохранить всё</button>
+        <button class="cfg-btn" onclick="toggleAddForm()">➕ Добавить провайдера</button>
+      </div>
+      <div id="addProviderForm">
+        <div style="font-size:.75rem;color:#6366f1;margin-bottom:.75rem;font-weight:600">➕ Новый провайдер</div>
+        <div class="field-grid">
+          <div class="f-group"><div class="f-label">ID</div><input class="f-input" id="np-id" placeholder="groq_third"></div>
+          <div class="f-group"><div class="f-label">Провайдер</div><select class="f-input" id="np-provider" onchange="onNewProviderChange()"><option value="groq">Groq</option><option value="gemini">Gemini</option><option value="huggingface">HuggingFace</option></select></div>
+          <div class="f-group"><div class="f-label">Аккаунт</div><input class="f-input" id="np-account" placeholder="Nexus / Roman"></div>
+          <div class="f-group"><div class="f-label">Название</div><input class="f-input" id="np-label" placeholder="Groq · Third"></div>
+          <div class="f-group full"><div class="f-label">API Ключ</div><input class="f-input" id="np-key" type="password" placeholder="gsk_..."></div>
+          <div class="f-group"><div class="f-label">API Base URL</div><input class="f-input" id="np-base"></div>
+          <div class="f-group"><div class="f-label">Модель</div><select class="f-input" id="np-model"></select></div>
+        </div>
+        <div style="margin-top:.6rem"><div class="f-label" style="margin-bottom:.4rem">Роли</div><div class="role-checks"><label><input type="checkbox" id="np-role-gen"> generator</label><label><input type="checkbox" id="np-role-ver"> verifier</label></div></div>
+        <div style="display:flex;gap:.5rem;margin-top:.85rem"><button class="cfg-btn primary" onclick="addProvider()">Добавить</button><button class="cfg-btn" onclick="toggleAddForm()">Отмена</button></div>
+      </div>
+      <div id="provider-cards"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════
+let historyEntries = [];
+let artifactsData = [];
+let histSortDir = 'desc';
+let artSortMode = 'new';
+let currentModalArtId = null;
+let trackerKnownModels = {};
+let trackerProviders = [];
+let allArtifactsForClarify = [];
+
+// ══════════════════════════════════════════════════════
+// NODE COLORS (единый источник истины для всех вкладок)
+// ══════════════════════════════════════════════════════
+const NODE_COLORS = {
+  stable_cluster:         '#4ade80',
+  'hyx-artifact':         '#4ade80',
+  'hyx-portal':           '#6366f1',
+  weak_pattern:           '#f59e0b',
+  mixed_patterns:         '#f59e0b',
+  noise:                  '#ef4444',
+  isolated:               '#ef4444',
+  sigma_primitive_candidate: '#94a3b8',   // ← серый, отличается от stable_cluster
+  terminological:         '#f97316',
+  unknown:                '#475569',
+};
+
+function typeColor(t) { return NODE_COLORS[t] || '#475569'; }
+
+function getNodeColor(node) {
+  if (node.is_bridge) return NODE_COLORS['hyx-portal'];
+  const s = node.stability || node.artifact_type || '';
+  // sigma_primitive_candidate по stability хранится как stable_cluster с phase_signal
+  // но artifact_type = sigma_primitive_candidate
+  return NODE_COLORS[node.artifact_type] || NODE_COLORS[s] || NODE_COLORS.unknown;
+}
+
+// Цвет ребра по весу: синий(0) → жёлтый(0.5) → красный(1)
+function weightToColor(w, maxW) {
+  if (!maxW || maxW === 0) return '#3b82f6';
+  const t = Math.min(w / maxW, 1.0);
+  if (t < 0.5) return lerpColor('#3b82f6', '#f59e0b', t * 2);
+  return lerpColor('#f59e0b', '#ef4444', (t - 0.5) * 2);
+}
+
+// ══════════════════════════════════════════════════════
+// TABS
+// ══════════════════════════════════════════════════════
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.getElementById(name + '-tab').classList.add('active');
+  if (name === 'history') loadHistory();
+  if (name === 'artifacts') loadArtifacts();
+  if (name === 'quarantine') loadQuarantine();
+  if (name === 'graph') loadGraph();
+  if (name === 'trash') loadTrash();
+  if (name === 'math') { loadMathStats(); loadInsights(); }
+}
+
+// ══════════════════════════════════════════════════════
+// RAG CONTEXT
+// ══════════════════════════════════════════════════════
+let ragTimer = null;
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('queryText').addEventListener('input', () => {
+    clearTimeout(ragTimer);
+    ragTimer = setTimeout(fetchRag, 600);
+  });
+});
+
+async function fetchRag() {
+  const text = document.getElementById('queryText').value.trim();
+  const block = document.getElementById('rag-block');
+  const items = document.getElementById('rag-items');
+  if (text.length < 10) { block.classList.remove('visible'); return; }
+  try {
+    const res = await fetch('/rag/context?text=' + encodeURIComponent(text) + '&top_k=3');
+    const data = await res.json();
+    if (!data.similar || !data.similar.length) { block.classList.remove('visible'); return; }
+    const dropped = data.dropped || 0;
+    items.innerHTML = data.similar.map(s => `
+      <div class="rag-item">
+        <span class="rag-domain">${s.domain}</span>
+        <span class="rag-sim">sim: ${s.similarity}</span>
+        <div class="rag-text">${escHtml(s.invariant)}</div>
+      </div>
+    `).join('') + (dropped > 0 ? `<div style="font-size:.68rem;color:#475569;margin-top:.3rem">⚠️ ${dropped} отфильтровано</div>` : '');
+    block.classList.add('visible');
+  } catch(e) { block.classList.remove('visible'); }
+}
+
+// ══════════════════════════════════════════════════════
+// MODEL BADGE
+// ══════════════════════════════════════════════════════
+function modelBadge(model) {
+  if (!model || model === 'none') return '';
+  const isHF = model.startsWith('huggingface/');
+  const isGroq = model.startsWith('groq/');
+  const isGemini = model.startsWith('gemini/');
+  const colors = { groq:'#4ade80', gemini:'#60a5fa', huggingface:'#a78bfa' };
+  const key = isGroq ? 'groq' : isGemini ? 'gemini' : 'huggingface';
+  const c = colors[key] || '#94a3b8';
+  const label = model.split('/').pop().substring(0, 24);
+  const tag = isHF ? '⚠️ fallback · ' : '';
+  return `<span style="font-size:.68rem;font-weight:normal;background:${c}22;color:${c};border:1px solid ${c}55;border-radius:4px;padding:.1rem .4rem;margin-left:.4rem">${tag}${label}</span>`;
+}
+
+function verPanel(ver) {
+  if (!ver) return '—';
+  const vcolor = ver.verdict==='VALID'?'#4ade80':ver.verdict==='WEAK'?'#fbbf24':'#ef4444';
+  const scolor = ver.translation?.survival==='STRUCTURAL'?'#4ade80':'#f59e0b';
+  let out = `verdict: <span style="color:${vcolor};font-weight:bold">${ver.verdict||'—'}</span>  conf: ${ver.confidence??'—'}\n`;
+  if (ver.translation) {
+    out += `\nStep 0 → <b>${ver.translation.target_domain||'?'}</b>\n`;
+    out += `survival: <span style="color:${scolor}">${ver.translation.survival||'?'}</span>\n`;
+    if (ver.translation.translated_mechanism)
+      out += `${escHtml(ver.translation.translated_mechanism.substring(0,180))}...\n`;
+  }
+  if (ver.issues?.length) { out += `\nissues:\n`; ver.issues.forEach(i => { out += `  · ${escHtml(i.substring(0,120))}\n`; }); }
+  if (ver.operationalization) {
+    const op = ver.operationalization;
+    out += `\nmodel: <span style="color:#60a5fa">${op.model||'?'}</span>\n`;
+    if (op.measurement) out += `measure: ${escHtml(op.measurement.substring(0,120))}\n`;
+    if (op.examples?.length) out += `example: ${escHtml(op.examples[0].substring(0,100))}\n`;
+  }
+  if (ver.refined_hypothesis)
+    out += `\n<span style="color:#c084fc">refined: ${escHtml(ver.refined_hypothesis.substring(0,200))}</span>\n`;
+  return out;
+}
+
+function archivistPanel(a) {
+  const noveltyColor = { 'PHENOMENAL':'#22d3ee','NOVEL':'#4ade80','KNOWN':'#94a3b8' };
+  const novelty = a.novelty || '—';
+  const isRephrasing = novelty.startsWith('REPHRASING_OF');
+  const nc = isRephrasing ? '#f59e0b' : (noveltyColor[novelty] || '#94a3b8');
+  const mathColor = a.mathematical_verification==='STRUCTURAL'?'#4ade80':a.mathematical_verification==='CONTRADICTION'?'#ef4444':'#f59e0b';
+  const links = (a.cross_domain_links||[]).join(', ') || '—';
+  const tags = (a.suggested_tags||[]).map(t=>`<span style="background:#6366f122;color:#818cf8;border-radius:4px;padding:.1rem .3rem;font-size:.7rem;margin-right:.2rem">${t}</span>`).join('');
+  const score = typeof a.novelty_score==='number'?(a.novelty_score*100).toFixed(0)+'%':'—';
+  const conf = typeof a.confidence==='number'?(a.confidence*100).toFixed(0)+'%':'—';
+  return `<div class="panel" style="border-left-color:#22d3ee;min-width:280px;flex:1">
+    <h3>🗄️ Archivist</h3>
+    <pre style="font-size:.82rem">Новизна: <span style="color:${nc};font-weight:bold">${novelty}</span>
+Верификация: <span style="color:${mathColor}">${a.mathematical_verification||'—'}</span>
+Novelty score: ${score}   Confidence: ${conf}
+Кросс-домен: ${links}
+Reasoning: ${escHtml(a.reasoning_summary||'—')}</pre>
+    ${tags ? '<div style="padding:.5rem 1rem .75rem">' + tags + '</div>' : ''}
+  </div>`;
+}
+
+// ══════════════════════════════════════════════════════
+// SEND QUERY
+// ══════════════════════════════════════════════════════
+async function sendQuery() {
+  const text = document.getElementById('queryText').value.trim();
+  if (!text) return;
+  const btn = document.getElementById('submitBtn');
+  const loading = document.getElementById('loading');
+  const pipeline = document.getElementById('pipeline');
+  const refNotice = document.getElementById('ref-update-notice');
+  btn.disabled = true;
+  loading.classList.add('active');
+  pipeline.innerHTML = '';
+  refNotice.style.display = 'none';
+
+  try {
+    const res = await fetch('/query', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text, domain: 'general', x_coordinate: 500})
+    });
+    const data = await res.json();
+
+    if (data.rejected) {
+      pipeline.innerHTML = `<div style="background:#1e293b;border-left:4px solid #ef4444;border-radius:12px;padding:1.25rem 1.5rem;color:#ef4444">
+        <div style="font-weight:bold;font-size:1.1rem;margin-bottom:.5rem">🚫 Запрос отклонён</div>
+        <div style="color:#94a3b8;font-size:.85rem;margin-bottom:.25rem">Stage: <span style="color:#fbbf24">${data.stage}</span></div>
+        <div style="color:#94a3b8;font-size:.85rem;margin-bottom:.25rem">Code: <span style="color:#f87171">${data.failure_code}</span></div>
+        <div style="color:#cbd5e1;font-size:.85rem;margin-top:.5rem">${escHtml(data.reason||'')}</div>
+      </div>`;
+      return;
+    }
+
+    // REF update notification
+    if (data.ref_updated) {
+      document.getElementById('ref-update-id').textContent = data.ref_updated;
+      refNotice.style.display = 'block';
+    }
+
+    const s = data.structural || {};
+    const tc = typeColor(s.artifact_type);
+    const ragCtx = data.rag_context || [];
+    pipeline.innerHTML = `
+      <div class="panel">
+        <h3>⚙️ Генератор · <b style="color:#fbbf24">${data.domain||'—'}</b>${ragCtx.length?' · 🧠 RAG:'+ragCtx.length:''}${data.rag_dropped?' · ✂️:'+data.rag_dropped:''} ${modelBadge(data.gen_model)}</h3>
+        <pre>${JSON.stringify(data.generation, null, 2)}</pre>
+      </div>
+      <div class="panel">
+        <h3>🔍 Верификатор ${modelBadge(data.ver_model)}</h3>
+        <pre>${verPanel(data.verification)}</pre>
+      </div>
+      <div class="panel">
+        <h3>✅ Структура</h3>
+        <pre>Тип: <span style="color:${tc}">${s.artifact_type||'—'}</span>
+Stability: ${s.stability||'—'}
+Specificity: ${s.specificity??'—'}
+Centrality: ${s.centrality??'—'}
+Bridge: ${s.is_bridge?'✅ ДА':'нет'}
+Similar: ${(s.similar_invariants||[]).length}
+Phase: ${s.phase_signal?.signal||'—'}
+Domains(window): ${s.phase_signal?.unique_domains??'—'}
+Сохранён: ${data.saved?'✅ ДА (ID: '+data.job_id+')':'нет'}</pre>
+      </div>
+      ${data.archivist ? archivistPanel(data.archivist) : ''}`;
+
+    if (data.generation?.four_d_matrix) {
+      renderFourDMatrix(data.generation.four_d_matrix, data.job_id);
+      renderMathCurrentResult(data);
+      loadInsights();
+      loadMathStats();
+    }
+
+    refreshTrackerDot();
+  } catch(err) {
+    pipeline.innerHTML = `<div style="color:#ef4444;padding:1rem">❌ ${err.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    loading.classList.remove('active');
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// HISTORY
+// ══════════════════════════════════════════════════════
+async function loadHistory() {
+  const container = document.getElementById('history-list');
+  container.innerHTML = 'Загрузка...';
+  try {
+    const res = await fetch('/history');
+    const data = await res.json();
+    historyEntries = data.history || [];
+    renderHistory();
+  } catch(err) { container.innerHTML = `<div style="color:#ef4444">${err.message}</div>`; }
+}
+
+function setSortHistory(dir) {
+  histSortDir = dir;
+  document.getElementById('hist-sort-desc').classList.toggle('active', dir==='desc');
+  document.getElementById('hist-sort-asc').classList.toggle('active', dir==='asc');
+  renderHistory();
+}
+
+function renderHistory() {
+  const container = document.getElementById('history-list');
+  if (!historyEntries.length) { container.innerHTML = '<p style="color:#94a3b8;text-align:center;">📭 Пусто</p>'; return; }
+  const sorted = histSortDir === 'asc' ? [...historyEntries] : [...historyEntries].reverse();
+  container.innerHTML = sorted.map((e, i) => {
+    const realIdx = histSortDir === 'asc' ? i : historyEntries.length - 1 - i;
+    const t = new Date(e.time * 1000).toLocaleString('ru-RU');
+    const q = (e.query||'').substring(0, 120);
+    const at = (e.structural||{}).artifact_type || '—';
+    const tc = typeColor(at);
+    const artId = e.artifact_id || e.job_id || '—';
+    return `<div class="history-item" onclick="showHistoryDetail(${realIdx})">
+      <div class="history-timestamp">
+        <span>🕐 ${t}</span>
+        <span style="font-family:monospace;color:#60a5fa;font-size:.68rem">${artId !== '—' ? '📄 ' + artId : ''}</span>
+      </div>
+      <div style="font-size:.75rem;color:#64748b;margin-bottom:.2rem"><b style="color:#94a3b8">${e.domain||'general'}</b> · <span style="color:${tc}">${at}</span>${(e.rag_context||[]).length?' · 🧠 RAG:'+e.rag_context.length:''}</div>
+      <div class="history-query">${escHtml(q)}</div>
+      <div class="history-meta">${e.saved?'✅ сохранён':'❌ не сохранён'}</div>
+    </div>`;
+  }).join('');
+}
+
+function showHistoryDetail(i) { const e = historyEntries[i]; if(e) showModal(JSON.stringify(e, null, 2), null); }
+
+// ══════════════════════════════════════════════════════
+// ARTIFACTS
+// ══════════════════════════════════════════════════════
+async function loadArtifacts() {
+  const container = document.getElementById('artifacts-list');
+  container.innerHTML = 'Загрузка...';
+  try {
+    const res = await fetch('/artifacts');
+    const data = await res.json();
+    artifactsData = data.artifacts || [];
+    renderArtifacts();
+  } catch(err) { container.innerHTML = `<div style="color:#ef4444">${err.message}</div>`; }
+}
+
+function setSortArtifacts(mode) {
+  artSortMode = mode;
+  document.querySelectorAll('.sort-btn[id^="art-sort"]').forEach(b => b.classList.remove('active'));
+  document.getElementById('art-sort-' + (mode==='new'?'new':mode==='old'?'old':mode==='bsync'?'bsync':'domain')).classList.add('active');
+  renderArtifacts();
+}
+
+function renderArtifacts() {
+  const container = document.getElementById('artifacts-list');
+  if (!artifactsData.length) { container.innerHTML = '<p style="color:#94a3b8;text-align:center;">📦 Пусто</p>'; return; }
+  let sorted = [...artifactsData];
+  if (artSortMode === 'old') sorted.reverse();
+  else if (artSortMode === 'bsync') sorted.sort((a,b) => (b.b_sync||0) - (a.b_sync||0));
+  else if (artSortMode === 'domain') sorted.sort((a,b) => (a.domain||'').localeCompare(b.domain||''));
+  // 'new' — уже в правильном порядке
+
+  container.innerHTML = sorted.map(item => {
+    const at = item.artifact_type || item.stability || 'unknown';
+    const tc = typeColor(at);
+    const isPortal = item.is_portal;
+    const vcolor = item.verdict==='VALID'?'#4ade80':item.verdict==='WEAK'?'#fbbf24':item.verdict==='FALSE'?'#ef4444':'#475569';
+    const noveltyShort = item.novelty ? item.novelty.split(':')[0] : '';
+    const nc = {PHENOMENAL:'#22d3ee',NOVEL:'#4ade80',KNOWN:'#94a3b8'}[noveltyShort] || '#475569';
+    const histMark = item.history_count > 0 ? `<span style="color:#60a5fa;font-size:.65rem">🔄 rev.${item.history_count}</span>` : '';
+    return `<div class="artifact-item">
+      <div class="artifact-row">
+        <div class="artifact-dot" style="background:${tc}" title="${at}"></div>
+        <div class="artifact-info">
+          <div class="artifact-name">
+            ${isPortal ? '🌀' : '📄'} ${item.file}
+            <span class="artifact-id-badge">${item.id}</span>
+            ${histMark}
+          </div>
+          <div class="artifact-meta">
+            <b style="color:#94a3b8">${item.domain||'—'}</b>
+            · <span style="color:${vcolor}">${item.verdict||'—'}</span> conf=${item.confidence}
+            · b_sync=<b>${item.b_sync}</b>
+            ${noveltyShort?`· <span style="color:${nc}">${noveltyShort}</span>`:''}
+          </div>
+          <div class="artifact-hypothesis">${escHtml(item.hypothesis_short||'')}</div>
+        </div>
+        <div class="artifact-actions">
+          <button class="act-btn" onclick="viewArtifact('${item.file}','${item.id}')">👁</button>
+          <button class="act-btn danger" onclick="confirmDelete('${item.id}',event)">🗑</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function confirmDelete(artId, evt) {
+  evt.stopPropagation();
+  if (!confirm(`Переместить артефакт ${artId} в корзину?`)) return;
+  try {
+    const res = await fetch(`/artifact/${artId}`, {method:'DELETE'});
+    const data = await res.json();
+    if (data.ok) { loadArtifacts(); loadGraph(); }
+  } catch(e) { alert('Ошибка: '+e.message); }
+}
+
+async function deleteCurrentArtifact() {
+  if (!currentModalArtId) return;
+  if (!confirm(`Переместить артефакт ${currentModalArtId} в корзину?`)) return;
+  try {
+    const res = await fetch(`/artifact/${currentModalArtId}`, {method:'DELETE'});
+    const data = await res.json();
+    if (data.ok) { closeModal(); loadArtifacts(); loadGraph(); }
+  } catch(e) { alert('Ошибка: '+e.message); }
+}
+
+async function viewArtifact(filename, artId) {
+  showModal('Загрузка...', artId || null);
+  try {
+    const res = await fetch(`/artifact/${encodeURIComponent(filename)}`);
+    if (!res.ok) throw new Error('Не найден');
+    const data = await res.json();
+    document.getElementById('artifactContent').textContent = JSON.stringify(data, null, 2);
+    if (artId) document.getElementById('modal-art-id').textContent = artId;
+  } catch(err) { document.getElementById('artifactContent').textContent = `Ошибка: ${err.message}`; }
+}
+
+function showModal(text, artId) {
+  currentModalArtId = artId || null;
+  document.getElementById('artifactContent').textContent = text;
+  document.getElementById('modal-art-id').textContent = artId || '';
+  document.getElementById('modal-delete-btn').style.display = artId ? 'inline-block' : 'none';
+  document.getElementById('artifactModal').style.display = 'block';
+}
+function closeModal() { document.getElementById('artifactModal').style.display = 'none'; currentModalArtId = null; }
+window.onclick = e => { if (e.target === document.getElementById('artifactModal')) closeModal(); if (e.target === document.getElementById('trackerModal')) closeTracker(); };
+
+// ══════════════════════════════════════════════════════
+// 3D GRAPH
+// ══════════════════════════════════════════════════════
+let graph3d = null;
+
+function getNodeSize(node) {
+  // Явная зависимость размера от b_sync: диапазон 2–18
+  const b = parseFloat(node.b_sync) || 0.1;
+  return 2 + Math.pow(b, 0.7) * 16;
+}
+
+async function loadGraph() {
+  try {
+    const [phaseRes, dataRes] = await Promise.all([fetch('/phase'), fetch('/graph/data')]);
+    const phase = await phaseRes.json();
+    const data = await dataRes.json();
+
+    const badge = document.getElementById('graph-phase-badge');
+    if (phase.signal === 'sigma_primitive_candidate') {
+      badge.textContent = `⚡ SIGMA CANDIDATE · density=${phase.density} · domains=${phase.unique_domains}`;
+      badge.className = 'sigma';
+    } else if (phase.signal === 'template_loop') {
+      badge.textContent = `⚠️ TEMPLATE LOOP · density=${phase.density} · domains=${phase.unique_domains}`;
+      badge.style.color = '#f59e0b'; badge.className = '';
+    } else {
+      badge.textContent = `Phase: ${phase.signal} · density=${phase.density}`;
+      badge.style.color = '#64748b'; badge.className = '';
+    }
+
+    document.getElementById('stat-nodes').textContent = data.meta.total_nodes;
+    document.getElementById('stat-edges').textContent = data.meta.total_edges;
+    document.getElementById('stat-clusters').textContent = data.meta.cluster_count;
+    document.getElementById('stat-bridges').textContent = data.meta.bridge_count;
+
+    if (!data.nodes.length) return;
+    renderGraph3D(data);
+  } catch(err) { console.error('Graph load error:', err); }
+}
+
+function renderGraph3D(data) {
+  const container = document.getElementById('graph-container');
+  container.innerHTML = '';
+  const maxWeight = Math.max(...data.links.map(l => l.weight || 0), 0.001);
+
+  const graphData = {
+    nodes: data.nodes.map(n => ({
+      ...n,
+      name: n.id.substring(0, 8),
+      color: getNodeColor(n),
+      val: getNodeSize(n),
+    })),
+    links: data.links.map(l => ({
+      ...l,
+      _edgeColor: weightToColor(l.weight || 0, maxWeight),
+    })),
+  };
+
+  graph3d = ForceGraph3D({controlType:'orbit'})(container)
+    .width(container.clientWidth).height(container.clientHeight)
+    .backgroundColor('#060d18')
+    .nodeRelSize(4)         // базовый размер — умножается на val
+    .nodeLabel(n => `<div style="background:rgba(15,23,42,.95);border:1px solid #334155;border-radius:8px;padding:.5rem .75rem;font-family:monospace;font-size:.75rem;max-width:280px">
+      <div style="color:#fbbf24;font-weight:bold;margin-bottom:.3rem">${n.id}</div>
+      <div style="color:#94a3b8">domain: <span style="color:#e2e8f0">${n.domain}</span></div>
+      <div style="color:#94a3b8">b_sync: <span style="color:#e2e8f0">${n.b_sync}</span></div>
+      <div style="color:#94a3b8">stability: <span style="color:${getNodeColor(n)}">${n.stability}</span></div>
+      <div style="color:#94a3b8">bridge: <span style="color:#e2e8f0">${n.is_bridge?'✅':'—'}</span></div>
+    </div>`)
+    .nodeColor(n => n.color)
+    .nodeVal(n => n.val)
+    .nodeOpacity(0.95)
+    .linkColor(l => l._edgeColor)
+    .linkWidth(l => 0.4 + (l.weight / maxWeight) * 4.5)   // ← ширина по весу
+    .linkOpacity(0.75)
+    .linkLabel(l => `weight: ${(l.weight||0).toFixed(3)} · sim: ${(l.similarity||0).toFixed(3)}`)
+    .graphData(graphData)
+    .onNodeClick(node => showNodeDetail(node));
+}
+
+function showNodeDetail(d) {
+  const panel = document.getElementById('node-detail');
+  const tc = getNodeColor(d);
+  panel.innerHTML = `<h4>🔍 Узел</h4>
+    <div class="detail-field"><div class="detail-key">ID</div><div class="detail-val" style="color:#fbbf24">${d.id}</div></div>
+    <div class="detail-field"><div class="detail-key">Domain</div><div class="detail-val">${d.domain}</div></div>
+    <div class="detail-field"><div class="detail-key">B_sync</div><div class="detail-val">${d.b_sync}</div></div>
+    <div class="detail-field"><div class="detail-key">Stability</div><div class="detail-val">
+      <span class="detail-badge" style="background:${tc}22;color:${tc};border:1px solid ${tc}66">${d.stability}</span>
+    </div></div>
+    <div class="detail-field"><div class="detail-key">Cluster</div><div class="detail-val">${d.cluster>=0?'#'+d.cluster:'изолирован'}</div></div>
+    <div class="detail-field"><div class="detail-key">Bridge</div><div class="detail-val">${d.is_bridge?'✅ ДА':'—'}</div></div>
+    <div style="margin-top:.75rem;display:flex;gap:.4rem;flex-wrap:wrap">
+      <button class="refresh-btn" style="font-size:.75rem;padding:.35rem .75rem" onclick="viewArtifact('${d.id}.json','${d.id}')">📄 Артефакт</button>
+      <button class="refresh-btn" style="font-size:.75rem;padding:.35rem .75rem;background:#ef444433;color:#ef4444" onclick="confirmDelete('${d.id}',event)">🗑 Удалить</button>
+    </div>`;
+}
+
+window.addEventListener('resize', () => {
+  if (graph3d) { const c=document.getElementById('graph-container'); graph3d.width(c.clientWidth).height(c.clientHeight); }
+});
+
+// ══════════════════════════════════════════════════════
+// QUARANTINE
+// ══════════════════════════════════════════════════════
+async function loadQuarantine() {
+  const container = document.getElementById('quarantine-list');
+  container.innerHTML = 'Загрузка...';
+  try {
+    const res = await fetch('/quarantine?limit=30');
+    const data = await res.json();
+    const items = data.quarantine || [];
+    if (!items.length) { container.innerHTML = '<p style="color:#4ade80;text-align:center;padding:2rem">✅ Карантин пуст</p>'; return; }
+    const codeColor = {'GEN_ALL_PROVIDERS_FAILED':'#ef4444','VER_ALL_PROVIDERS_FAILED':'#ef4444','GEN_EMPTY_JSON':'#f87171','VER_EMPTY_JSON':'#f87171','GEN_NO_HYPOTHESIS':'#fbbf24','GEN_INVALID_B_SYNC':'#fbbf24','VER_NO_VERDICT':'#fbbf24','PIPELINE_EXCEPTION':'#a78bfa'};
+    container.innerHTML = items.slice().reverse().map(e => {
+      const t = new Date(e.time*1000).toLocaleString('ru-RU');
+      const cc = codeColor[e.failure_code] || '#94a3b8';
+      const rb = (e.rollback_actions||[]).join(', ')||'—';
+      return `<div class="history-item" style="border-left-color:#ef4444">
+        <div class="history-timestamp"><span>🕐 ${t}</span><span style="color:#fbbf24;font-size:.68rem">stage: ${e.stage}</span></div>
+        <div style="font-size:.85rem;color:#e2e8f0;margin:.3rem 0">${escHtml((e.query||'').substring(0,100))}</div>
+        <div style="font-size:.75rem"><span style="background:${cc}22;color:${cc};border-radius:4px;padding:.1rem .4rem">${e.failure_code}</span></div>
+        <div style="font-size:.75rem;color:#94a3b8;margin-top:.3rem">${escHtml(e.reason||'')}</div>
+        ${rb!=='—'?'<div style="font-size:.7rem;color:#475569;margin-top:.25rem">Rollback: '+escHtml(rb)+'</div>':''}
+      </div>`;
+    }).join('');
+  } catch(err) { container.innerHTML = `<div style="color:#ef4444">${err.message}</div>`; }
+}
+
+// ══════════════════════════════════════════════════════
+// TRASH (корзина)
+// ══════════════════════════════════════════════════════
+async function loadTrash() {
+  const container = document.getElementById('trash-list');
+  container.innerHTML = 'Загрузка...';
+  try {
+    const res = await fetch('/trash');
+    const data = await res.json();
+    const items = data.trash || [];
+    if (!items.length) { container.innerHTML = '<p style="color:#4ade80;text-align:center;padding:2rem">🗑️ Корзина пуста</p>'; return; }
+    container.innerHTML = items.map(item => {
+      const delDate = item.deleted_at ? new Date(item.deleted_at).toLocaleString('ru-RU') : '?';
+      return `<div class="trash-item">
+        <div class="trash-item-header">
+          <div>
+            <span style="font-family:monospace;color:#fbbf24;font-size:.82rem">${item.file}</span>
+            <span class="artifact-id-badge" style="margin-left:.4rem">${item.id}</span>
+          </div>
+          <div class="trash-actions">
+            <button class="act-btn" onclick="restoreArtifact('${item.id}')">♻️ Восстановить</button>
+            <button class="act-btn danger" onclick="permanentDelete('${item.id}')">🗑 Удалить навсегда</button>
+          </div>
+        </div>
+        <div style="font-size:.72rem;color:#64748b">Удалён: ${delDate} · Создан: ${item.created_at ? new Date(item.created_at).toLocaleString('ru-RU') : '?'}</div>
+        <div style="font-size:.75rem;color:#94a3b8;margin-top:.3rem"><b>${item.domain||'—'}</b> · ${item.verdict||'—'}</div>
+        <div style="font-size:.78rem;color:#cbd5e1;margin-top:.2rem">${escHtml((item.hypothesis_short||'').substring(0,100))}</div>
+      </div>`;
+    }).join('');
+  } catch(err) { container.innerHTML = `<div style="color:#ef4444">${err.message}</div>`; }
+}
+
+async function restoreArtifact(artId) {
+  if (!confirm(`Восстановить артефакт ${artId}?`)) return;
+  try {
+    const res = await fetch(`/trash/${artId}/restore`, {method:'POST'});
+    const data = await res.json();
+    if (data.ok) { loadTrash(); loadArtifacts(); loadGraph(); }
+  } catch(e) { alert('Ошибка восстановления: '+e.message); }
+}
+
+async function permanentDelete(artId) {
+  if (!confirm(`⚠️ НАВСЕГДА удалить артефакт ${artId}? Это действие необратимо.`)) return;
+  try {
+    const res = await fetch(`/trash/${artId}/permanent`, {method:'DELETE'});
+    const data = await res.json();
+    if (data.ok) loadTrash();
+  } catch(e) { alert('Ошибка: '+e.message); }
+}
+
+// ══════════════════════════════════════════════════════
+// QUESTION GENERATOR (CLARIFY MODE — все артефакты)
+// ══════════════════════════════════════════════════════
+let currentMode = 'manual';
+
+function setMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-'+mode).classList.add('active');
+  document.getElementById('clarify-panel').style.display = mode==='clarify' ? 'block' : 'none';
+  const status = document.getElementById('mode-status');
+
+  if (mode === 'novel') {
+    status.textContent = '⏳ Генерация вопроса...';
+    document.getElementById('btn-novel').disabled = true;
+    fetch('/question/suggest').then(r=>r.json()).then(data => {
+      if (data.question) { document.getElementById('queryText').value = data.question; status.textContent = `✓ от ${data.model?.split('/').pop()||'?'}`; fetchRag(); }
+      else status.textContent = '❌ не удалось';
+    }).catch(e => { status.textContent = '❌ '+e.message; })
+    .finally(() => { document.getElementById('btn-novel').disabled = false; });
+
+  } else if (mode === 'clarify') {
+    status.textContent = '';
+    loadAllArtifactsForClarify();
+  } else {
+    status.textContent = '';
+  }
+}
+
+async function loadAllArtifactsForClarify() {
+  const sel = document.getElementById('clarify-select');
+  sel.innerHTML = '<option value="">— Загрузка...</option>';
+  try {
+    const res = await fetch('/artifacts/list');
+    const data = await res.json();
+    allArtifactsForClarify = data.artifacts || [];
+    if (!allArtifactsForClarify.length) { sel.innerHTML = '<option value="">— Нет артефактов</option>'; return; }
+    sel.innerHTML = '<option value="">— Выберите артефакт...</option>' + allArtifactsForClarify.map(c => {
+      const vc = c.verdict==='VALID'?'✅':c.verdict==='WEAK'?'⚠️':'❌';
+      const histMark = c.history_count > 0 ? ` [rev.${c.history_count}]` : '';
+      const label = `${vc} [${c.id}] [${c.domain}] ${c.artifact_type||''}${histMark} · ${(c.hypothesis_short||'').substring(0,50)}`;
+      return `<option value="${c.id}">${label}</option>`;
+    }).join('');
+    sel.onchange = () => showClarifyDetail(sel.value);
+  } catch(e) { sel.innerHTML = '<option value="">— Ошибка загрузки</option>'; }
+}
+
+function showClarifyDetail(artId) {
+  const detail = document.getElementById('clarify-detail');
+  if (!artId) { detail.style.display = 'none'; return; }
+  const c = allArtifactsForClarify.find(x => x.id === artId);
+  if (!c) return;
+  const vc = c.verdict==='VALID'?'#4ade80':c.verdict==='WEAK'?'#fbbf24':'#ef4444';
+  const at = typeColor(c.artifact_type||c.stability||'');
+  detail.style.display = 'block';
+  detail.innerHTML = `<div style="margin-bottom:.3rem">
+    <span style="color:${vc}">${c.verdict}</span> conf=${c.confidence} b_sync=${c.b_sync}
+    · issues:${c.issues_count} · spec=${c.specificity}
+    · <span style="color:${at}">${c.artifact_type||'—'}</span>
+    ${c.history_count>0?`<span style="color:#60a5fa;margin-left:.4rem">🔄 ревизий: ${c.history_count}</span>`:''}
+  </div>
+  <div style="color:#cbd5e1">${escHtml(c.hypothesis_short||'')}</div>`;
+}
+
+async function generateClarification() {
+  const sel = document.getElementById('clarify-select');
+  const artifactId = sel.value;
+  if (!artifactId) return;
+  const status = document.getElementById('mode-status');
+  status.textContent = '⏳ Генерация уточняющего вопроса...';
+  try {
+    const res = await fetch(`/question/clarify/${artifactId}`);
+    const data = await res.json();
+    if (data.error) { status.textContent = '❌ '+data.error; return; }
+    if (data.question) {
+      document.getElementById('queryText').value = data.question;
+      status.textContent = `✓ от ${data.model?.split('/').pop()||'?'}`;
+      fetchRag();
+    }
+  } catch(e) { status.textContent = '❌ '+e.message; }
+}
+
+// ══════════════════════════════════════════════════════
+// TRACKER
+// ══════════════════════════════════════════════════════
+function openTracker() { document.getElementById('trackerModal').style.display='block'; loadTrackerStats(); loadTrackerProviders(); }
+function closeTracker() { document.getElementById('trackerModal').style.display='none'; }
+
+function switchTrackerTab(name, btn) {
+  document.querySelectorAll('.tracker-tab').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  document.querySelectorAll('.tracker-tab-content').forEach(t=>t.classList.remove('active'));
+  document.getElementById('tracker-'+name).classList.add('active');
+}
+
+async function loadTrackerStats() {
+  try {
+    const res = await fetch('/tracker/stats');
+    const data = await res.json();
+    const t = data.totals || {};
+    document.getElementById('tracker-date').textContent = `Дата: ${t.date||'—'}`;
+    document.getElementById('sc-req-today').textContent = fmtNum(t.requests_today);
+    document.getElementById('sc-tokens-today').textContent = fmtNum(t.tokens_in_today+t.tokens_out_today);
+    document.getElementById('sc-errors-today').textContent = fmtNum(t.errors_today);
+    document.getElementById('sc-active').textContent = t.active_providers??'—';
+    const accBody = document.getElementById('acc-table-body');
+    accBody.innerHTML = (data.accounts||[]).map(a => {
+      const pc = a.provider==='groq'?'groq':a.provider==='gemini'?'gemini':'hf';
+      const ac = a.account==='Nexus'?'nexus':'roman';
+      return `<tr><td><span class="t-badge ${pc}">${a.provider}</span></td><td><span class="t-badge ${ac}">${a.account}</span></td><td style="text-align:center">${a.key_count}</td><td>${fmtNum(a.requests_today)}</td><td>${fmtNum(a.tokens_in_today)}</td><td>${fmtNum(a.tokens_out_today)}</td><td style="color:${a.errors_today>0?'#ef4444':'#4ade80'}">${fmtNum(a.errors_today)}</td><td>${fmtNum(a.requests_total)}</td></tr>`;
+    }).join('') || '<tr><td colspan="8" style="text-align:center;color:#475569;padding:1rem">Нет данных</td></tr>';
+    const provBody = document.getElementById('prov-table-body');
+    provBody.innerHTML = (data.providers||[]).map(p => {
+      const pc = p.provider==='groq'?'groq':p.provider==='gemini'?'gemini':'hf';
+      const roles = p.roles.map(r=>`<span class="t-badge ${r==='generator'?'gen':'ver'}">${r==='generator'?'gen':'ver'}</span>`).join(' ');
+      const lastUsed = p.last_used ? new Date(p.last_used).toLocaleTimeString('ru-RU') : '—';
+      const dot = `<span class="enabled-dot" style="background:${p.enabled?'#4ade80':'#ef4444'}"></span>`;
+      const lastErr = p.last_error ? `<span title="${escHtml(p.last_error)}" style="cursor:help;color:#f87171">⚠️</span>` : '';
+      return `<tr><td>${dot}<span class="t-badge ${pc}">${p.label.split('·')[0].trim()}</span><br><span style="font-size:.65rem;color:#475569">${p.account}</span></td><td>${roles}</td><td style="font-size:.72rem;color:#94a3b8">${p.model.split('/').pop().substring(0,20)}</td><td>${fmtNum(p.requests_today)}</td><td>${fmtNum(p.tokens_in_today)}</td><td>${fmtNum(p.tokens_out_today)}</td><td style="color:${p.errors_today>0?'#ef4444':'#4ade80'}">${fmtNum(p.errors_today)} ${lastErr}</td><td style="font-size:.7rem;color:#64748b">${lastUsed}</td><td>${p.enabled?'<span style="color:#4ade80">✓</span>':'<span style="color:#475569">выкл</span>'}</td></tr>`;
+    }).join('');
+    const dot = document.getElementById('trackerStatusDot');
+    dot.className = 'tracker-dot' + (t.errors_today>0?' warn':'');
+  } catch(err) { console.error('tracker stats error:', err); }
+}
+
+async function resetStats(scope) {
+  if (scope==='all' && !confirm('Сбросить ВСЮ статистику?')) return;
+  try { await fetch('/tracker/reset', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({scope})}); await loadTrackerStats(); }
+  catch(e) { alert('Ошибка сброса: '+e.message); }
+}
+
+async function refreshTrackerDot() {
+  try {
+    const res = await fetch('/tracker/stats');
+    const data = await res.json();
+    const dot = document.getElementById('trackerStatusDot');
+    dot.className = 'tracker-dot' + ((data.totals||{}).errors_today>0?' warn':'');
+  } catch(e) {}
+}
+
+async function loadTrackerProviders() {
+  try {
+    const res = await fetch('/tracker/providers');
+    const data = await res.json();
+    trackerProviders = data.providers || [];
+    trackerKnownModels = data.known_models || {};
+    renderProviderCards();
+    updateNewProviderModels();
+  } catch(err) { console.error(err); }
+}
+
+function renderProviderCards() {
+  const container = document.getElementById('provider-cards');
+  container.innerHTML = trackerProviders.map((p, i) => {
+    const pc = p.provider==='groq'?'groq':p.provider==='gemini'?'gemini':'hf';
+    const roles = p.roles.map(r=>`<span class="t-badge ${r==='generator'?'gen':'ver'}">${r}</span>`).join(' ');
+    const models = (trackerKnownModels[p.provider]||[]).map(m=>`<option value="${m}" ${m===p.model?'selected':''}>${m}</option>`).join('');
+    return `<div class="provider-card ${p.enabled?'':'disabled'}" id="card-${p.id}">
+      <div class="provider-card-header" onclick="toggleCard('${p.id}')">
+        <span class="enabled-dot" style="background:${p.enabled?'#4ade80':'#475569'}"></span>
+        <span class="pc-label">${escHtml(p.label)}</span>
+        <span class="pc-meta"><span class="t-badge ${pc}">${p.provider}</span><span class="t-badge ${p.account==='Nexus'?'nexus':'roman'}">${p.account}</span>${roles}<span style="color:#334155">pri=${p.priority}</span></span>
+        <span style="color:#334155;font-size:.8rem;margin-left:.5rem">▾</span>
+      </div>
+      <div class="provider-card-body" id="body-${p.id}">
+        <div class="field-grid">
+          <div class="f-group"><div class="f-label">Название</div><input class="f-input" value="${escHtml(p.label)}" onchange="updateProvider(${i},'label',this.value)"></div>
+          <div class="f-group"><div class="f-label">Аккаунт</div><input class="f-input" value="${escHtml(p.account)}" onchange="updateProvider(${i},'account',this.value)"></div>
+          <div class="f-group full"><div class="f-label">API Ключ</div><input class="f-input" type="password" value="${escHtml(p.api_key)}" onchange="updateProvider(${i},'api_key',this.value)" onfocus="this.type='text'" onblur="this.type='password'"></div>
+          <div class="f-group"><div class="f-label">API Base URL</div><input class="f-input" value="${escHtml(p.api_base)}" onchange="updateProvider(${i},'api_base',this.value)"></div>
+          <div class="f-group"><div class="f-label">Модель</div><select class="f-input" onchange="updateProvider(${i},'model',this.value)">${models}<option value="${p.model}" ${!models.includes(p.model)?'selected':''}>— ${p.model}</option></select></div>
+          <div class="f-group"><div class="f-label">Приоритет</div><input class="f-input" type="number" min="1" max="99" value="${p.priority}" onchange="updateProvider(${i},'priority',parseInt(this.value))"></div>
+        </div>
+        <div style="margin-top:.6rem"><div class="f-label" style="margin-bottom:.35rem">Роли</div><div class="role-checks">
+          <label><input type="checkbox" ${p.roles.includes('generator')?'checked':''} onchange="toggleRole(${i},'generator',this.checked)"> generator</label>
+          <label><input type="checkbox" ${p.roles.includes('verifier')?'checked':''} onchange="toggleRole(${i},'verifier',this.checked)"> verifier</label>
+        </div></div>
+        <div class="card-actions">
+          <button class="card-btn" onclick="toggleEnabled(${i})">${p.enabled?'⏸ Отключить':'▶ Включить'}</button>
+          <button class="card-btn danger" onclick="deleteProvider('${p.id}')">🗑 Удалить</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('') || '<div style="color:#475569;text-align:center;padding:2rem">Нет провайдеров</div>';
+}
+
+function toggleCard(id) { document.getElementById('body-'+id).classList.toggle('open'); }
+function updateProvider(idx, field, value) { trackerProviders[idx][field] = value; }
+function toggleRole(idx, role, checked) {
+  const roles = trackerProviders[idx].roles || [];
+  trackerProviders[idx].roles = checked ? [...new Set([...roles, role])] : roles.filter(r=>r!==role);
+}
+function toggleEnabled(idx) { trackerProviders[idx].enabled = !trackerProviders[idx].enabled; renderProviderCards(); }
+
+async function saveAllProviders() {
+  try {
+    const res = await fetch('/tracker/providers', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({providers: trackerProviders})});
+    const data = await res.json();
+    if (data.ok) { renderProviderCards(); alert(`✅ Сохранено ${data.count} провайдеров`); }
+  } catch(err) { alert('Ошибка: '+err.message); }
+}
+
+async function deleteProvider(pid) {
+  if (!confirm(`Удалить провайдера ${pid}?`)) return;
+  try {
+    const res = await fetch(`/tracker/providers/${pid}`, {method:'DELETE'});
+    const data = await res.json();
+    if (data.ok) await loadTrackerProviders();
+  } catch(err) { alert('Ошибка: '+err.message); }
+}
+
+function toggleAddForm() { document.getElementById('addProviderForm').classList.toggle('open'); }
+function updateNewProviderModels() {
+  const prov = document.getElementById('np-provider')?.value || 'groq';
+  const sel = document.getElementById('np-model');
+  if (!sel) return;
+  sel.innerHTML = (trackerKnownModels[prov]||[]).map(m=>`<option value="${m}">${m}</option>`).join('');
+  const baseMap = {groq:'https://api.groq.com/openai/v1', gemini:'https://generativelanguage.googleapis.com/v1beta', huggingface:'https://api-inference.huggingface.co/v1'};
+  const base = document.getElementById('np-base');
+  if (base && baseMap[prov]) base.value = baseMap[prov];
+}
+function onNewProviderChange() { updateNewProviderModels(); }
+
+async function addProvider() {
+  const id = document.getElementById('np-id').value.trim().replace(/\s+/g,'_');
+  const provider = document.getElementById('np-provider').value;
+  const account = document.getElementById('np-account').value.trim();
+  const label = document.getElementById('np-label').value.trim();
+  const api_key = document.getElementById('np-key').value.trim();
+  const api_base = document.getElementById('np-base').value.trim();
+  const model = document.getElementById('np-model').value;
+  const roles = [];
+  if (document.getElementById('np-role-gen').checked) roles.push('generator');
+  if (document.getElementById('np-role-ver').checked) roles.push('verifier');
+  if (!id || !api_key || !roles.length) { alert('Заполните ID, API ключ и выберите роль'); return; }
+  try {
+    const res = await fetch('/tracker/providers/add', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, provider, account, label: label||id, api_key, api_base, model, roles, enabled:true, priority:99})});
+    const data = await res.json();
+    if (data.ok) { toggleAddForm(); await loadTrackerProviders(); }
+  } catch(err) { alert('Ошибка: '+err.message); }
+}
+
+// ══════════════════════════════════════════════════════
+// UTILS
+// ══════════════════════════════════════════════════════
+function fmtNum(n) {
+  if (n===undefined||n===null) return '—';
+  if (n>=1000000) return (n/1000000).toFixed(1)+'M';
+  if (n>=1000) return (n/1000).toFixed(1)+'K';
+  return String(n);
+}
+
+function lerpColor(a, b, t) {
+  const ah=parseInt(a.replace('#',''),16), bh=parseInt(b.replace('#',''),16);
+  const ar=(ah>>16)&0xff, ag=(ah>>8)&0xff, ab=ah&0xff;
+  const br=(bh>>16)&0xff, bg=(bh>>8)&0xff, bb=bh&0xff;
+  const rr=Math.round(ar+(br-ar)*t), rg=Math.round(ag+(bg-ag)*t), rb=Math.round(ab+(bb-ab)*t);
+  return `#${((1<<24)+(rr<<16)+(rg<<8)+rb).toString(16).slice(1)}`;
+}
+
+function escHtml(str) {
+  return String(str).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+// ══════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════
+window.onload = () => { loadHistory(); loadArtifacts(); refreshTrackerDot(); loadMathStats(); };
+
+// ═════════════════════════════════════════════════════════════════════════════=
+// 4D MATRIX DISPLAY
+// ═════════════════════════════════════════════════════════════════════════════=
+
+let _lastFourD = null;
+let _lastJobId = null;
+
+function renderFourDMatrix(fd, jobId) {
+  if (!fd) return;
+  _lastFourD = fd;
+  if (jobId) _lastJobId = jobId;
+
+  document.getElementById('four-d-empty').style.display = 'none';
+  document.getElementById('four-d-matrix-display').style.display = 'block';
+
+  const s = fd.structure || {};
+  const inf = fd.influence || {};
+  const d = fd.dynamics || {};
+  const t = fd.time || {};
+
+  document.getElementById('fd-C').textContent    = fmtFd(s.C);
+  document.getElementById('fd-k').textContent    = fmtFd(s.k);
+  document.getElementById('fd-D').textContent    = fmtFd(s.D);
+  document.getElementById('fd-h').textContent    = fmtFd(inf.h);
+  document.getElementById('fd-T').textContent    = fmtFd(inf.T);
+  document.getElementById('fd-eta').textContent  = fmtFd(inf.eta);
+  document.getElementById('fd-omega').textContent = fmtFd(d.omega_i);
+  document.getElementById('fd-K').textContent    = fmtFd(d.K);
+  document.getElementById('fd-Kc').textContent   = fmtFd(d.K_c);
+  document.getElementById('fd-p').textContent    = fmtFd(d.p);
+  document.getElementById('fd-tau').textContent  = fmtFd(t.tau);
+  document.getElementById('fd-H').textContent    = fmtFd(t.H);
+  document.getElementById('fd-freq').textContent = fmtFd(t.freq);
+
+  const modelEl = document.getElementById('four-d-model-pill');
+  if (d.model) {
+    modelEl.innerHTML = `<span class="four-d-model-badge">${d.model}</span>`;
+  }
+
+  if (jobId) document.getElementById('stress-artifact-id').value = jobId;
+}
+
+function fmtFd(v) {
+  if (v === undefined || v === null) return '—';
+  return typeof v === 'number' ? v.toFixed(3) : String(v);
+}
+
+function renderMathCurrentResult(data) {
+  const sim = data.simulation;
+  const res = data.resonance;
+  if (!sim && !res) return;
+
+  document.getElementById('math-current-result').style.display = 'block';
+  document.getElementById('math-current-id').textContent = data.job_id || '';
+
+  let html = '';
+
+  if (sim) {
+    const sc = sim.stability_score ?? 0;
+    const ly = sim.lyapunov_max ?? 0;
+    const scColor = sc >= 0.7 ? '#4ade80' : sc >= 0.4 ? '#f59e0b' : '#ef4444';
+    const lyColor = ly < 0 ? '#4ade80' : '#ef4444';
+    const lyLabel = ly < 0 ? 'устойчиво (λ<0)' : 'неустойчиво (λ>0)';
+    html += `
+      <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:.75rem">
+        <div style="background:#0f172a;border-radius:8px;padding:.6rem 1rem;flex:1;min-width:120px;text-align:center">
+          <div style="font-size:1.5rem;font-weight:800;color:${scColor};font-family:monospace">${(sc*100).toFixed(0)}%</div>
+          <div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em">stability score</div>
+        </div>
+        <div style="background:#0f172a;border-radius:8px;padding:.6rem 1rem;flex:1;min-width:120px;text-align:center">
+          <div style="font-size:1.5rem;font-weight:800;color:${lyColor};font-family:monospace">${ly.toFixed(3)}</div>
+          <div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em">λ_max · ${lyLabel}</div>
+        </div>
+        <div style="background:#0f172a;border-radius:8px;padding:.6rem 1rem;flex:1;min-width:120px;text-align:center">
+          <div style="font-size:1.5rem;font-weight:800;color:#60a5fa;font-family:monospace">${sim.cpu_time_s ?? '—'}s</div>
+          <div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em">cpu time</div>
+        </div>
+      </div>
+      <div style="font-size:.75rem;color:#94a3b8">
+        Граница: η_max=${sim.eta_critical ?? '—'} · 
+        K_above_Kc: ${sim.bifurcation_boundary?.K_above_critical ? '<span style="color:#4ade80">ДА</span>' : '<span style="color:#ef4444">НЕТ</span>'} · 
+        τ_max_stable=${sim.bifurcation_boundary?.tau_max_stable ?? '—'} · 
+        Выжил: <b style="color:${sim.survival_verified?'#4ade80':'#ef4444'}">${sim.survival_verified ? 'ДА' : 'НЕТ'}</b>
+      </div>`;
+  }
+
+  if (res && res.insights && res.insights.length) {
+    html += `<div style="margin-top:.85rem;font-size:.72rem;color:#6366f1;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.4rem">
+      Top 4D резонансы (${res.total})</div>`;
+    res.insights.forEach(ins => {
+      const p = ins.probability ?? 0;
+      const band = ins.confidence_band || 'low';
+      const domArrow = `${ins.source_domain} → ${ins.target_domain}`;
+      html += `<div class="insight-item ${band}" style="margin-bottom:.4rem">
+        <div style="display:flex;align-items:center;gap:.5rem">
+          <span class="insight-prob" style="color:${p>=0.7?'#4ade80':p>=0.5?'#f59e0b':'#ef4444'}">${(p*100).toFixed(0)}%</span>
+          <span class="insight-domains">${escHtml(domArrow)}</span>
+          <span class="prob-badge ${band}" style="margin-left:auto">${band}</span>
+        </div>
+        <div class="insight-meta">iso_4d=${ins.iso_4d ?? '—'} · scale=${ins.scale_align ?? '—'} · proto=${(ins.prototype_id||'').substring(0,8)}</div>
+      </div>`;
+    });
+  }
+
+  document.getElementById('math-current-body').innerHTML = html || '<div style="color:#475569;font-size:.8rem">—</div>';
+}
+
+async function runStressTest() {
+  const artId = document.getElementById('stress-artifact-id').value.trim();
+  if (!artId) { alert('Введите artifact_id'); return; }
+
+  const btn = document.getElementById('stress-run-btn');
+  const running = document.getElementById('stress-running');
+  const result = document.getElementById('stress-result');
+
+  btn.disabled = true;
+  running.style.display = 'block';
+  result.style.display = 'none';
+
+  try {
+    const res = await fetch(`/math/stress/${artId}`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    if (data.error) {
+      running.textContent = `❌ ${data.error}`;
+      return;
+    }
+
+    renderStressResult(data);
+    result.style.display = 'block';
+    running.style.display = 'none';
+    loadMathStats();
+  } catch (e) {
+    running.textContent = `❌ ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderStressResult(data) {
+  const sc = data.stability_score ?? 0;
+  const ly = data.lyapunov_max ?? 0;
+  const scColor = sc >= 0.7 ? '#4ade80' : sc >= 0.4 ? '#f59e0b' : '#ef4444';
+  const lyColor = ly < 0 ? '#4ade80' : '#ef4444';
+
+  document.getElementById('stress-score-bar').style.width = `${sc * 100}%`;
+  document.getElementById('stress-score-bar').style.background = scColor;
+  document.getElementById('stress-score-val').textContent = (sc * 100).toFixed(0) + '%';
+
+  const lyNorm = Math.max(0, Math.min(1, 0.5 + ly * 0.03));
+  document.getElementById('stress-lya-bar').style.width = `${lyNorm * 100}%`;
+  document.getElementById('stress-lya-bar').style.background = lyColor;
+  document.getElementById('stress-lya-val').textContent = ly.toFixed(3);
+
+  const tau_r = data.stress_tau || [];
+  const eta_r = data.stress_eta || [];
+  const K_r   = data.stress_K   || [];
+
+  const items = [
+    ...tau_r.map(r => ({ label: `τ×${r.tau_mult}`, stable: r.stable })),
+    ...eta_r.map(r => ({ label: `η+${r.eta_delta}`, stable: r.stable })),
+    ...K_r.map(r =>  ({ label: `K×${r.K_mult}`, stable: r.stable })),
+  ];
+
+  document.getElementById('stress-items-grid').innerHTML = items.map(it => {
+    const c = it.stable ? '#4ade80' : '#ef4444';
+    const icon = it.stable ? '✓' : '✗';
+    return `<div class="stress-item">
+      <div class="stress-item-label">${it.label}</div>
+      <div class="stress-item-val" style="color:${c}">${icon}</div>
+    </div>`;
+  }).join('');
+
+  const bf = data.bifurcation_boundary || {};
+  const survived = data.survival_verified;
+  document.getElementById('stress-boundaries').innerHTML = `
+    Модель: <b>${data.model_used || '—'}</b> · 
+    η_critical: <b>${data.eta_critical ?? '—'}</b> · 
+    τ_max_stable: <b>${bf.tau_max_stable ?? '—'}</b> · 
+    K_above_Kc: <b style="color:${bf.K_above_critical?'#4ade80':'#ef4444'}">${bf.K_above_critical?'ДА':'НЕТ'}</b> · 
+    cpu: <b>${data.cpu_time_s ?? '—'}s</b> · 
+    Итог: <b style="color:${survived?'#4ade80':'#ef4444'};font-size:.82rem">${survived?'✅ ВЫЖИЛ':'❌ НЕСТАБИЛЕН'}</b>
+  `;
+}
+
+async function loadInsights() {
+  const filter = document.getElementById('insights-filter')?.value || 'all';
+  const container = document.getElementById('insights-list');
+  try {
+    const res = await fetch(`/insights/feed?status=${filter}&limit=25`);
+    const data = await res.json();
+    const items = data.insights || [];
+    if (!items.length) {
+      container.innerHTML = '<div style="color:#475569;font-size:.8rem;font-style:italic">Инсайтов пока нет.</div>';
+      return;
+    }
+    container.innerHTML = items.map(ins => {
+      const p = ins.probability ?? 0;
+      const band = ins.confidence_band || 'low';
+      const pColor = p >= 0.7 ? '#4ade80' : p >= 0.5 ? '#f59e0b' : '#ef4444';
+      const domArrow = `${ins.source_domain} → ${ins.target_domain}`;
+      const ts = ins.generated_at ? new Date(ins.generated_at).toLocaleString('ru-RU') : '';
+      const proto = (ins.prototype_id || '').substring(0, 8);
+      return `<div class="insight-item ${band}">
+        <div style="display:flex;align-items:center;gap:.5rem">
+          <span class="insight-prob" style="color:${pColor}">${(p*100).toFixed(0)}%</span>
+          <span class="insight-domains">${escHtml(domArrow)}</span>
+          <span class="prob-badge ${band}" style="margin-left:auto">${band}</span>
+        </div>
+        <div style="font-size:.75rem;color:#94a3b8;margin-top:.2rem">
+          iso_4d=${ins.iso_4d ?? '—'} · scale=${ins.scale_align ?? '—'} · proto=${proto}
+        </div>
+        <div class="insight-meta">${ts}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    container.innerHTML = `<div style="color:#ef4444">${e.message}</div>`;
+  }
+}
+
+async function loadMathStats() {
+  try {
+    const res = await fetch('/math/stats');
+    const data = await res.json();
+    document.getElementById('ms-indexed').textContent = data.indexed_4d ?? 0;
+    document.getElementById('ms-sims').textContent    = data.sim_results ?? 0;
+    document.getElementById('ms-insights').textContent = data.insights ?? 0;
+  } catch (e) { }
+}
+</script>
+</body>
+</html>
