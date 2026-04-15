@@ -1,5 +1,8 @@
 # HX-AM v4.2 Server — 4D-граф формализации + MathCore
-# Интеграция: стресс-тесты, резонансный поиск, инсайты
+# Исправления v4.2.1:
+#   - process_query: MathCore перемещён ПОСЛЕ save_artifact (fix: _patch_artifact)
+#   - process_query: domain diversity guard (подавление overrepresented+low-spec)
+#   - result dict инициализируется с simulation/resonance=None до сохранения
 
 import os, json, time, hashlib, logging, re, shutil
 from pathlib import Path
@@ -19,7 +22,6 @@ from question_generator import QuestionGenerator
 from api_usage_tracker import tracker
 from response_normalizer import normalize_gen, normalize_ver, repairs_summary
 
-# v4.2 ADD: MathCore
 from math_core import MathCore
 
 load_dotenv()
@@ -31,8 +33,8 @@ app = FastAPI(title="HX-AM v4.2")
 Path("artifacts").mkdir(exist_ok=True)
 Path("trash").mkdir(exist_ok=True)
 Path("chat_history").mkdir(exist_ok=True)
-Path("sim_results").mkdir(exist_ok=True)   # для кэша симуляций
-Path("insights").mkdir(exist_ok=True)      # для инсайтов
+Path("sim_results").mkdir(exist_ok=True)
+Path("insights").mkdir(exist_ok=True)
 
 logger.info("Загрузка семантического индекса...")
 semantic_space = SemanticSpace()
@@ -46,7 +48,6 @@ guard = PipelineGuard()
 quarantine = QuarantineLog()
 question_gen = QuestionGenerator(space=semantic_space, graph=invariant_graph)
 
-# v4.2 ADD: Math Core singleton
 logger.info("Инициализация MathCore...")
 math_core = MathCore(artifacts_dir="artifacts", four_d_index="artifacts/four_d_index.jsonl")
 logger.info("MathCore готов.")
@@ -262,6 +263,26 @@ def update_referenced_artifact(ref_id: str, result: dict, query: str):
 # CORE PIPELINE
 # ════════════════════════════════════════════════════════════════
 
+# Порог domain diversity: если домен занимает больше DOMAIN_CAP доли архива
+# И specificity ниже SPEC_FLOOR — сохранение подавляется.
+_DOMAIN_CAP = 0.30
+_SPEC_FLOOR = 0.15
+_DOMAIN_MIN_NODES = 15   # не применяем до накопления базы
+
+
+def _is_domain_overrepresented(domain: str, spec: float) -> tuple[bool, str]:
+    """Возвращает (подавить, причина) для domain diversity guard."""
+    G = invariant_graph.G
+    total = G.number_of_nodes()
+    if total < _DOMAIN_MIN_NODES:
+        return False, ""
+    dom_count = sum(1 for _, a in G.nodes(data=True) if a.get("domain") == domain)
+    ratio = dom_count / total
+    if ratio > _DOMAIN_CAP and spec < _SPEC_FLOOR:
+        return True, f"domain='{domain}' {dom_count}/{total} ({ratio:.0%}), spec={spec:.3f}"
+    return False, ""
+
+
 def process_query(req: QueryRequest):
     client = LLMClient()
     job_id = hashlib.md5(f"{req.text}{time.time()}".encode()).hexdigest()[:12]
@@ -272,7 +293,7 @@ def process_query(req: QueryRequest):
     ver_repairs: List[str] = []
 
     try:
-        # RAG
+        # ── RAG ─────────────────────────────────────────────────────
         rag_raw = semantic_space.nearest(req.text, top_k=5, threshold=0.55)
         rag_similar = filter_rag_diversity(rag_raw, max_per_domain=1, sim_cap=0.88)
         rag_block = ""
@@ -281,7 +302,7 @@ def process_query(req: QueryRequest):
             for s in rag_similar:
                 rag_block += f"- [{s['domain']}] {s['invariant']} (sim:{s['similarity']})\n"
 
-        # ГЕНЕРАЦИЯ
+        # ── ГЕНЕРАЦИЯ ───────────────────────────────────────────────
         gen_input = f"{GEN_PROMPT}{rag_block}\n\nX: {req.x_coordinate}\n\nUser input:\n{req.text}"
         logger.info(f"Job {job_id}: generating... rag_raw={len(rag_raw)} rag_filtered={len(rag_similar)}")
         gen_raw, gen_model = client.generate(gen_input)
@@ -307,7 +328,7 @@ def process_query(req: QueryRequest):
         domain = resolve_domain(gen, req.domain)
         logger.info(f"Job {job_id}: gen OK → b_sync={gen.get('b_sync')} domain={domain}")
 
-        # ВЕРИФИКАЦИЯ
+        # ── ВЕРИФИКАЦИЯ ─────────────────────────────────────────────
         ver_input = f"{VER_PROMPT}\n\nHypothesis:\n{json.dumps(gen, ensure_ascii=False)}"
         ver_raw, ver_model = client.verify(ver_input, context=req.text)
 
@@ -336,78 +357,67 @@ def process_query(req: QueryRequest):
         confidence = ver.get("confidence", 0.5)
         logger.info(f"Job {job_id}: ver OK → verdict={verdict} conf={confidence}")
 
-        # РЕШЕНИЕ О СОХРАНЕНИИ
+        # ── РЕШЕНИЕ О СОХРАНЕНИИ ────────────────────────────────────
         save = False
         if verdict == "VALID" and confidence > 0.6:
             save = True
         elif verdict == "WEAK" and float(gen.get("b_sync", 0)) > 0.7:
             save = True
 
-        result = {
-            "job_id": job_id,
-            "generation": gen,
-            "verification": ver,
-            "saved": save,
-            "artifact": None,
-            "domain": domain,
-            "rag_context": rag_similar,
-            "rag_dropped": len(rag_raw) - len(rag_similar),
-            "gen_model": gen_model,
-            "ver_model": ver_model,
-            "repairs": repairs_summary(gen_repairs, ver_repairs),
-        }
-
-        # INVARIANT ENGINE
+        # ── INVARIANT ENGINE ────────────────────────────────────────
         rollback.snapshot_space(semantic_space)
         rollback.register_graph_node(job_id)
 
         result = process_with_invariants(
-            result=result, job_id=job_id,
-            space=semantic_space, graph=invariant_graph, detector=phase_detector,
+            result={
+                "job_id": job_id,
+                "generation": gen,
+                "verification": ver,
+                "saved": save,
+                "artifact": None,
+                "domain": domain,
+                "rag_context": rag_similar,
+                "rag_dropped": len(rag_raw) - len(rag_similar),
+                "gen_model": gen_model,
+                "ver_model": ver_model,
+                "repairs": repairs_summary(gen_repairs, ver_repairs),
+            },
+            job_id=job_id,
+            space=semantic_space,
+            graph=invariant_graph,
+            detector=phase_detector,
         )
         structural = result.get("structural", {})
         phase_signal = structural.get("phase_signal", {})
-        logger.info(f"Job {job_id}: engine OK → type={structural.get('artifact_type')} phase={phase_signal.get('signal')}")
+        spec = structural.get("specificity", 1.0)
+        logger.info(
+            f"Job {job_id}: engine OK → type={structural.get('artifact_type')} "
+            f"phase={phase_signal.get('signal')} spec={spec:.3f}"
+        )
 
-        # MathCore: стресс-тест и резонанс (если есть four_d_matrix)
+        # ── DOMAIN DIVERSITY GUARD ──────────────────────────────────
+        # Если домен перенасыщен И гипотеза банальна — не сохранять,
+        # но продолжать: граф уже обновлён, артефакт останется как weak_pattern.
+        suppress, suppress_reason = _is_domain_overrepresented(domain, spec)
+        if save and suppress:
+            save = False
+            result["save_skipped_reason"] = suppress_reason
+            logger.info(f"Job {job_id}: save suppressed by domain diversity guard — {suppress_reason}")
+
+        # Обновляем флаг сохранения в result
+        result["saved"] = save
+
+        # 4D и stress_test — доступны сразу из gen/ver, не требуют сохранённого файла
         four_d = gen.get("four_d_matrix")
-        if four_d:
-            try:
-                sim_result = math_core.stress_test(job_id, four_d)
-                result["simulation"] = sim_result
-                # Индексация для резонансного поиска
-                math_core.index_artifact(
-                    artifact_id=job_id,
-                    four_d=four_d,
-                    domain=domain,
-                    stability_score=sim_result.get("stability_score", 0.5),
-                )
-                # Поиск резонанса
-                survival = ver.get("translation", {}).get("survival", "UNKNOWN")
-                resonance_result = math_core.find_resonance(
-                    query_four_d=four_d,
-                    query_domain=domain,
-                    query_survival=survival,
-                    top_k=3,
-                )
-                result["resonance"] = resonance_result
-                logger.info(
-                    f"Job {job_id}: MathCore OK → stability={sim_result.get('stability_score')} "
-                    f"top_resonance={resonance_result.get('top_resonance')}"
-                )
-            except Exception as e:
-                logger.warning(f"Job {job_id}: MathCore failed — {e}")
-                result["simulation"] = None
-                result["resonance"] = None
-        else:
-            result["simulation"] = None
-            result["resonance"] = None
-
-        # Дублируем 4D и стресс-тест на верхний уровень для UI
         result["four_d_matrix"] = four_d
         result["stress_test"] = ver.get("stress_test")
+        result["simulation"] = None
+        result["resonance"] = None
 
-        # СОХРАНЕНИЕ
+        # ── СОХРАНЕНИЕ ──────────────────────────────────────────────
+        # ВАЖНО: portal и artifact сохраняются ДО вызова MathCore,
+        # чтобы _patch_artifact() внутри stress_test() нашёл файл.
+
         if structural.get("is_bridge"):
             portal_path = Path("artifacts") / f"{job_id}.hyx-portal.json"
             portal_data = {
@@ -443,6 +453,41 @@ def process_query(req: QueryRequest):
                 logger.warning(f"Job {job_id}: archivist failed - {e}")
                 result["archivist"] = None
 
+        # ── MATHCORE ────────────────────────────────────────────────
+        # Вызывается ПОСЛЕ save_artifact, чтобы _patch_artifact нашёл файл.
+        # Для несохранённых артефактов stress_test всё равно запускается
+        # (результат в sim_results/), но патчить артефакт некуда — это ожидаемо.
+        if four_d:
+            try:
+                sim_result = math_core.stress_test(job_id, four_d)
+                result["simulation"] = sim_result
+
+                math_core.index_artifact(
+                    artifact_id=job_id,
+                    four_d=four_d,
+                    domain=domain,
+                    stability_score=sim_result.get("stability_score", 0.5),
+                )
+
+                survival = ver.get("translation", {}).get("survival", "UNKNOWN")
+                if isinstance(ver.get("translation"), dict):
+                    survival = ver["translation"].get("survival", "UNKNOWN")
+
+                resonance_result = math_core.find_resonance(
+                    query_four_d=four_d,
+                    query_domain=domain,
+                    query_survival=survival,
+                    top_k=3,
+                )
+                result["resonance"] = resonance_result
+                logger.info(
+                    f"Job {job_id}: MathCore OK → stability={sim_result.get('stability_score')} "
+                    f"top_resonance={resonance_result.get('top_resonance')}"
+                )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: MathCore failed — {e}")
+
+        # ── ИСТОРИЯ ─────────────────────────────────────────────────
         log_history({
             "time": time.time(),
             "job_id": job_id,
@@ -456,9 +501,10 @@ def process_query(req: QueryRequest):
             "rag_context": rag_similar,
             "rag_dropped": len(rag_raw) - len(rag_similar),
             "repairs": repairs_summary(gen_repairs, ver_repairs),
+            "save_skipped_reason": result.get("save_skipped_reason"),
         })
 
-        # AUTO-UPDATE REF
+        # ── AUTO-UPDATE REF ──────────────────────────────────────────
         ref_id = extract_ref_id(req.text)
         if ref_id:
             logger.info(f"Job {job_id}: detected REF:{ref_id} — updating referenced artifact")
@@ -526,7 +572,7 @@ def ui():
 
 
 # ════════════════════════════════════════════════════════════════
-# ENDPOINTS — ARTIFACTS (без изменений, см. оригинал)
+# ENDPOINTS — ARTIFACTS
 # ════════════════════════════════════════════════════════════════
 
 def _trashed_ids() -> set:
@@ -638,7 +684,7 @@ def artifact(name: str):
 def soft_delete_artifact(artifact_id: str):
     art_file = Path("artifacts") / f"{artifact_id}.json"
     portal_file = Path("artifacts") / f"{artifact_id}.hyx-portal.json"
-    if not art_file.exists() and not art_file.exists():
+    if not art_file.exists() and not portal_file.exists():
         raise HTTPException(404, f"Artifact {artifact_id} not found")
     trash_path = Path("trash")
     trash_path.mkdir(exist_ok=True)

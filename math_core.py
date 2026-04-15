@@ -2,6 +2,11 @@
 """
 MathCore — вычислительный движок для HX-AM v4.2.
 
+Исправления v4.2.1:
+  - ResonanceMatcher._load_index: пропускает дубликаты при загрузке
+  - ResonanceMatcher._rewrite_index: перезаписывает файл из памяти
+  - ResonanceMatcher.add_to_index: обновляет существующий вектор вместо дубликата
+
 Режим 1 (StressTest):
   Принимает 4D-матрицу → запускает ODE-симуляцию →
   расшатывает параметры → возвращает stability_score, λ_max, границы устойчивости.
@@ -11,15 +16,10 @@ MathCore — вычислительный движок для HX-AM v4.2.
   масштабирует параметры в целевой домен → вычисляет P(A→B).
 
 Оптимизировано для i5-6300U / 8 GB RAM:
-  N_OSCILLATORS_MAX = 200  (не 5000)
-  T_MAX_FACTOR = 50        (50·τ вместо 100·τ)
-  Без numba (избыточный overhead при одиночных вызовах)
-  Кэш: sim_results/{id}_cache.json (лёгкий JSON, не .npz)
-
-CLI-использование:
-  python math_core.py --test
-  python math_core.py --stress <artifact_id>
-  python math_core.py --resonance <text>
+  N_OSCILLATORS_MAX = 200
+  T_MAX_FACTOR = 50
+  Без numba
+  Кэш: sim_results/{id}_stress.json
 """
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.spatial.distance import cosine as scipy_cosine
 
-# Опциональный импорт nolds (Hurst exponent)
 try:
     import nolds
     _NOLDS_AVAILABLE = True
@@ -50,11 +49,11 @@ logger = logging.getLogger("HXAM.mathcore")
 # КОНСТАНТЫ
 # ──────────────────────────────────────────────
 
-N_OSCILLATORS_MAX = 200   # Ограничение по RAM
-T_MAX_FACTOR = 50         # t_max = T_MAX_FACTOR × τ
-STRESS_LEVELS = [0.1, 0.3, 0.5]     # уровни расшатывания (± от номинала)
-STABILITY_THRESHOLD = 0.6            # r > threshold = стабильно
-COHERENCE_LOSS_THRESHOLD = 0.4      # r < threshold = потеря когерентности
+N_OSCILLATORS_MAX = 200
+T_MAX_FACTOR = 50
+STRESS_LEVELS = [0.1, 0.3, 0.5]
+STABILITY_THRESHOLD = 0.6
+COHERENCE_LOSS_THRESHOLD = 0.4
 
 SIM_RESULTS_DIR = Path("sim_results")
 INSIGHTS_DIR = Path("insights")
@@ -73,10 +72,7 @@ def _now_iso() -> str:
 class KuramotoSimulator:
     """
     Модель Курамото с задержкой и шумом.
-
     dθ_i/dt = ω_i + (K/N)·Σ sin(θ_j − θ_i) + η·ξ(t)
-
-    Возвращает: order_parameter r(t) и финальный r.
     """
 
     def __init__(self, N: int = 100, seed: int = 42):
@@ -96,16 +92,11 @@ class KuramotoSimulator:
         t_span = (0.0, t_max)
         t_eval = np.linspace(0, t_max, min(500, int(t_max * 20)))
 
-        # Начальные фазы — случайные равномерно
         theta0 = self.rng.uniform(0, 2 * math.pi, N)
-
-        # Собственные частоты: Лоренциан или нормальное
         omegas = self.rng.normal(omega_i, max(omega_i * 0.1, 0.05), N)
 
         def rhs(t: float, theta: np.ndarray) -> np.ndarray:
-            # CORRECTED: diff[i,j] = θ_j − θ_i → sin(θ_j − θ_i)
-            # Детерминированный член; шум добавляется через post-step Euler
-            diff = theta[None, :] - theta[:, None]  # (N, N): diff[i,j] = θ_j − θ_i
+            diff = theta[None, :] - theta[:, None]
             coupling = (K / N) * np.sum(np.sin(diff), axis=1)
             return omegas + coupling
 
@@ -124,8 +115,6 @@ class KuramotoSimulator:
         if not sol.success:
             return self._failed_result()
 
-        # Добавляем стохастическое возмущение к траектории (Euler-Maruyama post-processing)
-        # Это правильнее чем добавлять шум внутри solve_ivp (который вызывает rhs несколько раз)
         if eta > 0 and len(t_eval) > 1:
             dt_mean = (t_eval[-1] - t_eval[0]) / len(t_eval)
             noise = eta * self.rng.normal(0, np.sqrt(dt_mean), sol.y.shape)
@@ -133,7 +122,6 @@ class KuramotoSimulator:
         else:
             sol_y = sol.y
 
-        # Параметр порядка r(t) = |1/N Σ exp(i·θ_j)|
         r_series = np.abs(np.mean(np.exp(1j * sol_y), axis=0))
         r_final = float(r_series[-1]) if len(r_series) > 0 else 0.0
         r_mean = float(np.mean(r_series[-min(50, len(r_series)):]))
@@ -159,10 +147,7 @@ class KuramotoSimulator:
 
 
 class PercolationSimulator:
-    """
-    Бернуллиевая перколяция на случайном графе.
-    Находит порог p_c (наличие гигантской компоненты).
-    """
+    """Бернуллиевая перколяция на случайном графе."""
 
     def __init__(self, N: int = 500):
         try:
@@ -177,10 +162,7 @@ class PercolationSimulator:
             return {"model": "percolation", "giant_fraction": p, "stable": p > 0.5}
 
         nx = self._nx
-        rng = np.random.default_rng(42)
         N = self.N
-
-        # Создаём случайный граф Erdos-Renyi с вероятностью p
         p_edge = min(p, k_mean / max(N - 1, 1))
         G = nx.erdos_renyi_graph(N, p_edge, seed=42)
         components = sorted(nx.connected_components(G), key=len, reverse=True)
@@ -202,10 +184,6 @@ class PercolationSimulator:
 # ══════════════════════════════════════════════
 
 class StabilityAnalyzer:
-    """
-    Вычисляет максимальный показатель Ляпунова (упрощённый метод возмущений).
-    Не требует numba — только numpy/scipy.
-    """
 
     @staticmethod
     def lyapunov_estimate(
@@ -215,31 +193,20 @@ class StabilityAnalyzer:
         N: int = 50,
         t_steps: int = 300,
     ) -> float:
-        """
-        Приближённый λ_max через разницу двух близких траекторий (метод Бенеттина).
-        Запускается детерминированно (без шума) — шум добавляет диффузию,
-        которая маскирует настоящий λ_max.
-        Отрицательный → асимптотически устойчиво.
-        Положительный → хаос или расходимость.
-        """
         rng = np.random.default_rng(0)
         omegas = rng.normal(omega_i, max(omega_i * 0.1, 0.01), N)
         dt = 0.05
 
         def step_det(theta: np.ndarray) -> np.ndarray:
-            """Детерминированный шаг Euler (без шума)."""
             diff = theta[None, :] - theta[:, None]
             coupling = (K / N) * np.sum(np.sin(diff), axis=1)
             return theta + (omegas + coupling) * dt
 
-        # Начальные условия: вблизи синхронизованного состояния (если K > K_c)
         if K > 0:
-            # Стартуем с малым разбросом фаз — ближе к аттрактору
             theta = rng.normal(0.0, 0.3, N)
         else:
             theta = rng.uniform(0, 2 * math.pi, N)
 
-        # Прогрев: 100 шагов до установившегося режима
         for _ in range(100):
             theta = step_det(theta)
 
@@ -254,12 +221,10 @@ class StabilityAnalyzer:
             if dist < 1e-15 or dist > 1e3:
                 break
             log_growth.append(math.log(dist / delta0))
-            # Реортонормализация
             theta_p = theta + (theta_p - theta) / dist * delta0
 
         if not log_growth:
             return 0.0
-        # λ_max = среднее log-growth в единицу времени
         return round(float(np.mean(log_growth)) / dt, 4)
 
     @staticmethod
@@ -271,9 +236,6 @@ class StabilityAnalyzer:
         eta_range: Tuple[float, float] = (0.0, 1.5),
         n_steps: int = 10,
     ) -> float:
-        """
-        Бинарный поиск максимального η до потери когерентности (r < COHERENCE_LOSS_THRESHOLD).
-        """
         sim = KuramotoSimulator(N=80)
         lo, hi = eta_range
 
@@ -293,16 +255,6 @@ class StabilityAnalyzer:
 # ══════════════════════════════════════════════
 
 class StressTester:
-    """
-    Mode 1: Внутренняя верификация 4D-артефакта.
-
-    Алгоритм:
-      1. Запустить базовую симуляцию
-      2. Расшатать K, tau, eta на ±10%, ±30%, ±50%
-      3. Вычислить λ_max
-      4. Найти критические границы
-      5. Вернуть stability_score [0,1]
-    """
 
     def __init__(self):
         self.kuramoto = KuramotoSimulator(N=100)
@@ -322,34 +274,26 @@ class StressTester:
         tau = float(tim.get("tau", 0.5))
         model_name = str(dyn.get("model", "kuramoto")).lower()
 
-        # ── Базовая симуляция
         base_result = self._run_model(model_name, omega_i, K, eta, tau, four_d)
 
-        # ── Стресс-тест по τ (×1.5, ×2.0)
         tau_results = []
         for tau_mult in [1.5, 2.0]:
             r = self._run_model(model_name, omega_i, K, eta, tau * tau_mult, four_d)
             tau_results.append({"tau_mult": tau_mult, "stable": r.get("stable", False)})
 
-        # ── Стресс-тест по η (+0.15, +0.30)
         eta_results = []
         for eta_delta in [0.15, 0.30]:
             r = self._run_model(model_name, omega_i, K, min(eta + eta_delta, 1.5), tau, four_d)
             eta_results.append({"eta_delta": round(eta_delta, 2), "stable": r.get("stable", False)})
 
-        # ── Стресс-тест по K (×0.7, ×0.85)
         K_results = []
         for K_mult in [0.70, 0.85]:
             r = self._run_model(model_name, omega_i, K * K_mult, eta, tau, four_d)
             K_results.append({"K_mult": K_mult, "stable": r.get("stable", False)})
 
-        # ── λ_max
         lyapunov = self.analyzer.lyapunov_estimate(omega_i, K, eta)
-
-        # ── Критическое η
         eta_critical = self.analyzer.find_critical_eta(omega_i, K, K_c, tau)
 
-        # ── Stability score: доля прошедших стресс-тестов
         all_stress = tau_results + eta_results + K_results
         passed = sum(1 for s in all_stress if s.get("stable", False))
         stability_score = round(
@@ -386,7 +330,6 @@ class StressTester:
             "survival_verified": stability_score >= 0.6,
         }
 
-        # Сохраняем в sim_results/
         self._save_result(artifact_id, result)
         return result
 
@@ -405,7 +348,6 @@ class StressTester:
             sim = PercolationSimulator(N=300)
             return sim.run(p=p, k_mean=k_mean)
         else:
-            # По умолчанию Kuramoto (работает для большинства моделей)
             return self.kuramoto.run(omega_i=omega_i, K=K, eta=eta, tau=tau)
 
     def _save_result(self, artifact_id: str, result: Dict[str, Any]):
@@ -420,7 +362,12 @@ class StressTester:
 
 class ResonanceMatcher:
     """
-    Mode 2: Поиск изоморфных артефактов по 4D-вектору и генерация инсайтов.
+    Mode 2: Поиск изоморфных артефактов по 4D-вектору.
+
+    v4.2.1 исправления:
+      - _load_index: автоматически пропускает дублирующиеся id при загрузке
+      - _rewrite_index: перезаписывает весь файл из in-memory состояния
+      - add_to_index: если artifact_id уже в индексе — обновляет, не дублирует
     """
 
     def __init__(self, four_d_index_path: str = "artifacts/four_d_index.jsonl"):
@@ -432,6 +379,8 @@ class ResonanceMatcher:
     def _load_index(self):
         if not self.index_path.exists():
             return
+        seen_ids: set = set()
+        duplicates = 0
         with open(self.index_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -439,12 +388,33 @@ class ResonanceMatcher:
                     continue
                 try:
                     entry = json.loads(line)
+                    art_id = entry.get("id", "")
+                    if art_id in seen_ids:
+                        duplicates += 1
+                        logger.debug(f"ResonanceMatcher: skip duplicate id={art_id}")
+                        continue
+                    seen_ids.add(art_id)
                     vec = np.array(entry["vector"], dtype=np.float64)
                     self._vectors.append(vec)
                     self._meta.append(entry)
                 except Exception:
                     continue
-        logger.info(f"ResonanceMatcher: loaded {len(self._vectors)} 4D vectors")
+
+        if duplicates:
+            logger.info(
+                f"ResonanceMatcher: loaded {len(self._vectors)} vectors, "
+                f"skipped {duplicates} duplicates — rewriting clean index"
+            )
+            self._rewrite_index()
+        else:
+            logger.info(f"ResonanceMatcher: loaded {len(self._vectors)} 4D vectors")
+
+    def _rewrite_index(self):
+        """Перезаписывает файл индекса из in-memory состояния (дедупликация)."""
+        self.index_path.parent.mkdir(exist_ok=True)
+        with open(self.index_path, "w", encoding="utf-8") as f:
+            for entry in self._meta:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def add_to_index(
         self,
@@ -454,7 +424,10 @@ class ResonanceMatcher:
         vec: np.ndarray,
         stability_score: float = 0.5,
     ):
-        """Добавляет вектор в индекс и сохраняет в файл."""
+        """
+        Добавляет вектор в индекс.
+        Если artifact_id уже присутствует — обновляет запись (без дубликата).
+        """
         entry = {
             "id": artifact_id,
             "domain": domain,
@@ -463,11 +436,26 @@ class ResonanceMatcher:
             "stability_score": stability_score,
             "added_at": _now_iso(),
         }
-        self._vectors.append(vec)
-        self._meta.append(entry)
-        self.index_path.parent.mkdir(exist_ok=True)
-        with open(self.index_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+        existing_idx = next(
+            (i for i, m in enumerate(self._meta) if m.get("id") == artifact_id),
+            None,
+        )
+
+        if existing_idx is not None:
+            # Обновляем in-memory и перезаписываем файл целиком
+            self._vectors[existing_idx] = vec
+            self._meta[existing_idx] = entry
+            self._rewrite_index()
+            logger.debug(f"ResonanceMatcher: updated existing entry for {artifact_id}")
+        else:
+            # Новый артефакт — append-only, быстро
+            self._vectors.append(vec)
+            self._meta.append(entry)
+            self.index_path.parent.mkdir(exist_ok=True)
+            with open(self.index_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            logger.debug(f"ResonanceMatcher: appended new entry for {artifact_id}")
 
     def find_similar(
         self,
@@ -475,7 +463,6 @@ class ResonanceMatcher:
         top_k: int = 5,
         threshold: float = 0.55,
     ) -> List[Dict[str, Any]]:
-        """Возвращает top_k ближайших артефактов по 4D-расстоянию."""
         if not self._vectors:
             return []
 
@@ -491,10 +478,8 @@ class ResonanceMatcher:
         return sorted(results, key=lambda x: -x["4d_resonance"])[:top_k]
 
     def _compute_resonance(self, a: np.ndarray, b: np.ndarray) -> float:
-        """Взвешенный 4D-изоморфизм [0,1]."""
         if a.shape != b.shape:
             return 0.0
-        # Косинус + 1 - евклид (среднее двух метрик)
         try:
             cos_sim = 1.0 - float(scipy_cosine(a, b))
         except Exception:
@@ -510,22 +495,13 @@ class ResonanceMatcher:
 # ══════════════════════════════════════════════
 
 class ProbabilityEngine:
-    """
-    Вычисляет P(A→B) — вероятность кросс-доменного резонанса.
 
-    Формула:
-      Raw = α·Iso_4D + β·StabilityScore + γ·ScaleAlign + δ·SurvivalBonus − ε·NoisePenalty
-      P = σ(k·(Raw − x0))
-    """
+    ALPHA = 0.35
+    BETA  = 0.25
+    GAMMA = 0.20
+    DELTA = 0.15
+    EPS   = 0.05
 
-    # Веса (подобраны на симуляциях из документации)
-    ALPHA = 0.35   # 4D-изоморфизм
-    BETA  = 0.25   # стабильность (StressTester)
-    GAMMA = 0.20   # масштабное согласование
-    DELTA = 0.15   # бонус за STRUCTURAL survival
-    EPS   = 0.05   # штраф за шум
-
-    # Логистическая калибровка
     K_LOGISTIC = 5.0
     X0_LOGISTIC = 0.60
 
@@ -551,7 +527,6 @@ class ProbabilityEngine:
         )
         p = round(self.sigmoid(self.K_LOGISTIC * (raw - self.X0_LOGISTIC)), 3)
 
-        # Калибровочный бэнд
         if p >= 0.75:
             band = "high"
         elif p >= 0.55:
@@ -576,32 +551,16 @@ class ProbabilityEngine:
 
     @staticmethod
     def compute_scale_align(domain_a: str, domain_b: str) -> float:
-        """
-        Согласование масштабов между доменами.
-        Упрощённая версия без внешнего config — на основе известных порядков масштабов.
-        """
-        # Референсный масштаб: характерный размер сети (узлы)
         SCALES: Dict[str, float] = {
-            "physics": 1e6,
-            "chemistry": 1e4,
-            "biology": 1e3,
-            "neuroscience": 1e4,
-            "psychology": 1e2,
-            "sociology": 1e5,
-            "economics": 1e6,
-            "linguistics": 1e4,
-            "ecology": 1e3,
-            "geology": 1e5,
-            "medicine": 1e3,
-            "astronomy": 1e9,
-            "history": 1e4,
-            "architecture": 1e2,
-            "general": 1e3,
+            "physics": 1e6, "chemistry": 1e4, "biology": 1e3,
+            "neuroscience": 1e4, "psychology": 1e2, "sociology": 1e5,
+            "economics": 1e6, "linguistics": 1e4, "ecology": 1e3,
+            "geology": 1e5, "medicine": 1e3, "astronomy": 1e9,
+            "history": 1e4, "architecture": 1e2, "general": 1e3,
         }
         s_a = SCALES.get(domain_a.lower(), 1e3)
         s_b = SCALES.get(domain_b.lower(), 1e3)
         ratio = abs(math.log10(s_a) - math.log10(s_b))
-        # Большая разница масштабов = хуже согласование; нормируем на 9 декад (макс. = astro vs psychology)
         return round(max(0.0, 1.0 - ratio / 9.0), 3)
 
 
@@ -610,11 +569,6 @@ class ProbabilityEngine:
 # ══════════════════════════════════════════════
 
 class MathCore:
-    """
-    Главный оркестратор MathCore v4.2.
-
-    Вызывается из hxam_v_4_server.py после process_with_invariants().
-    """
 
     def __init__(
         self,
@@ -635,11 +589,6 @@ class MathCore:
         artifact_id: str,
         four_d: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """
-        Запускает стресс-тест для артефакта.
-        Если four_d не передан — читает из файла артефакта.
-        Результат записывает в артефакт + sim_results/.
-        """
         if four_d is None:
             four_d = self._load_four_d(artifact_id)
 
@@ -648,7 +597,8 @@ class MathCore:
 
         try:
             result = self.stress_tester.run(four_d, artifact_id)
-            # Обновить артефакт
+            # Патчим артефакт только если файл существует
+            # (вызывается после save_artifact в server.py)
             self._patch_artifact(artifact_id, {"simulation": result})
             logger.info(
                 f"MathCore stress_test {artifact_id}: "
@@ -671,9 +621,6 @@ class MathCore:
         target_domains: Optional[List[str]] = None,
         top_k: int = 3,
     ) -> Dict[str, Any]:
-        """
-        Ищет изоморфные артефакты и генерирует вероятностный инсайт.
-        """
         from schemas.four_d_matrix import FourDMatrix, compute_4d_resonance
 
         matrix = FourDMatrix.from_raw(query_four_d)
@@ -689,7 +636,6 @@ class MathCore:
             match_domain = match.get("domain", "general")
             stability = match.get("stability_score", 0.5)
 
-            # Загрузить simulation.stability_score из sim_results если есть
             sim_path = SIM_RESULTS_DIR / f"{match['id']}_stress.json"
             if sim_path.exists():
                 try:
@@ -722,7 +668,6 @@ class MathCore:
             }
             insights.append(insight)
 
-        # Сохраняем инсайты
         for insight in insights:
             self._save_insight(insight)
 
@@ -733,7 +678,7 @@ class MathCore:
         }
 
     # ──────────────────────────────────────────
-    # PUBLIC: Индексирование нового артефакта
+    # PUBLIC: Индексирование
     # ──────────────────────────────────────────
 
     def index_artifact(
@@ -743,7 +688,6 @@ class MathCore:
         domain: str,
         stability_score: float = 0.5,
     ):
-        """Добавляет 4D-вектор нового артефакта в индекс для последующего поиска."""
         from schemas.four_d_matrix import FourDMatrix
 
         matrix = FourDMatrix.from_raw(four_d)
@@ -775,8 +719,10 @@ class MathCore:
             return None
 
     def _patch_artifact(self, artifact_id: str, patch: Dict[str, Any]):
+        """Патчит артефакт если файл существует. Тихо пропускает если нет."""
         path = self.artifacts_dir / f"{artifact_id}.json"
         if not path.exists():
+            logger.debug(f"_patch_artifact: {artifact_id}.json not found, skipping")
             return
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -796,20 +742,16 @@ class MathCore:
 
     @staticmethod
     def selftest():
-        """Быстрый тест всех компонентов."""
-        print("MathCore v4.2 self-test...")
+        print("MathCore v4.2.1 self-test...")
 
-        # Тест KuramotoSimulator
         sim = KuramotoSimulator(N=50)
         r = sim.run(omega_i=0.25, K=0.6, eta=0.15, tau=0.5)
-        assert r["model"] == "kuramoto", "Kuramoto model name mismatch"
+        assert r["model"] == "kuramoto"
         print(f"  KuramotoSimulator: r_final={r['r_final']} stable={r['stable']} ✓")
 
-        # Тест StabilityAnalyzer
         lya = StabilityAnalyzer.lyapunov_estimate(0.25, 0.6, 0.15, N=50, t_steps=100)
         print(f"  LyapunovEstimate: λ_max={lya} ✓")
 
-        # Тест SchemaUtils
         from schemas.four_d_matrix import FourDMatrix, compute_4d_resonance
         fd = FourDMatrix.from_raw({
             "structure": {"C": 0.6, "k": 9, "D": 2.1},
@@ -817,19 +759,36 @@ class MathCore:
             "dynamics": {"omega_i": 0.25, "K": 0.4, "K_c": 0.48, "p": 0.7, "model": "kuramoto"},
             "time": {"tau": 0.5, "H": 0.75, "freq": 1.1},
         })
-        assert fd is not None, "FourDMatrix parse failed"
+        assert fd is not None
         vec = fd.to_vector()
-        assert len(vec) == 13, f"Vector dim mismatch: {len(vec)}"
+        assert len(vec) == 13
         r2 = compute_4d_resonance(vec, vec)
-        assert r2 == 1.0, f"Self-resonance != 1.0: {r2}"
+        assert r2 == 1.0
         print(f"  FourDMatrix: vec.shape={vec.shape} self_resonance={r2} ✓")
 
-        # Тест ProbabilityEngine
         pe = ProbabilityEngine()
-        p = pe.compute(iso_4d=0.89, stability_score=0.85, scale_align=0.7, survival="STRUCTURAL", noise_penalty=0.2)
+        p = pe.compute(iso_4d=0.89, stability_score=0.85, scale_align=0.7,
+                       survival="STRUCTURAL", noise_penalty=0.2)
         print(f"  ProbabilityEngine: P={p['probability']} band={p['confidence_band']} ✓")
 
-        # Тест StressTester
+        # Тест дедупликации ResonanceMatcher
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, mode="w") as tmp:
+            tmp_path = tmp.name
+        try:
+            rm = ResonanceMatcher(tmp_path)
+            test_vec = np.ones(13, dtype=np.float64) * 0.5
+            rm.add_to_index("test_001", {}, "physics", test_vec, 0.7)
+            rm.add_to_index("test_001", {}, "physics", test_vec, 0.8)  # дубликат
+            rm.add_to_index("test_002", {}, "biology", test_vec * 0.9, 0.6)
+            assert len(rm._meta) == 2, f"Expected 2, got {len(rm._meta)}"
+            # Проверяем что stability_score обновился
+            idx = next(i for i, m in enumerate(rm._meta) if m["id"] == "test_001")
+            assert rm._meta[idx]["stability_score"] == 0.8, "stability_score not updated"
+            print(f"  ResonanceMatcher dedup: entries={len(rm._meta)} ✓")
+        finally:
+            os.unlink(tmp_path)
+
         four_d_test = {
             "structure": {"C": 0.6, "k": 8.0, "D": 2.1},
             "influence": {"h": 0.8, "T": 1.0, "eta": 0.18},
@@ -850,7 +809,7 @@ if __name__ == "__main__":
     import argparse
     logging.basicConfig(level=logging.INFO)
 
-    parser = argparse.ArgumentParser(description="MathCore v4.2 CLI")
+    parser = argparse.ArgumentParser(description="MathCore v4.2.1 CLI")
     parser.add_argument("--test",   action="store_true", help="Run self-test")
     parser.add_argument("--stress", type=str, default="",  help="artifact_id to stress-test")
     args = parser.parse_args()
