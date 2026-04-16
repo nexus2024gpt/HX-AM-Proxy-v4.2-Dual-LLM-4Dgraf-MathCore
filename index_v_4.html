@@ -43,9 +43,15 @@ textarea:focus{outline:none;border-color:#6366f1}
 
 /* Pipeline */
 .pipeline{display:flex;gap:1rem;flex-wrap:wrap;margin-top:1.5rem}
-.panel{flex:1;min-width:280px;background:#1e293b;border-radius:12px;border-left:4px solid #6366f1;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,.3)}
-.panel h3{background:#334155;padding:.75rem;margin:0;font-size:1rem;color:#cbd5e1}
+.panel{background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:1rem;border-left:4px solid #6366f1}
+.panel h3{background:#334155;padding:.75rem;margin:0;font-size:1rem;color:#cbd5e1;border-radius:8px 8px 0 0}
 .panel pre{padding:1rem;margin:0;font-size:.85rem;white-space:pre-wrap;word-wrap:break-word;color:#e2e8f0;max-height:300px;overflow-y:auto}
+
+.detail-field{margin-bottom:0.75rem}
+
+.detail-key{font-size:0.72rem;color:#64748b;text-transform:uppercase;letter-spacing:0.05em}
+
+.detail-val{color:#e2e8f0;font-size:0.9rem;line-height:1.4}
 
 /* History & Artifacts */
 .list-toolbar{display:flex;align-items:center;gap:.5rem;margin-bottom:.75rem;flex-wrap:wrap}
@@ -156,6 +162,9 @@ pre{white-space:pre-wrap;word-wrap:break-word}
 .t-table tr:hover td{background:#1e293b88}
 .t-badge{display:inline-block;padding:.1rem .35rem;border-radius:4px;font-size:.65rem;font-weight:bold}
 .t-badge.groq{background:#4ade8022;color:#4ade80}.t-badge.gemini{background:#60a5fa22;color:#60a5fa}.t-badge.hf{background:#a78bfa22;color:#a78bfa}
+.t-badge.nvidia { background:#22d3ee22; color:#22d3ee; border:1px solid #22d3ee44; }
+.t-badge.openrouter { background:#a78bfa22; color:#a78bfa; border:1px solid #a78bfa44; }
+.t-badge.custom { background:#f472b622; color:#f472b6; border:1px solid #f472b644; }
 .t-badge.nexus{background:#fbbf2422;color:#fbbf24}.t-badge.roman{background:#fb923c22;color:#fb923c}
 .t-badge.gen{background:#6366f122;color:#818cf8}.t-badge.ver{background:#22d3ee22;color:#22d3ee}
 .enabled-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:.3rem}
@@ -233,7 +242,7 @@ select.f-input option{background:#1e293b}
 .stress-running{color:#4ade80;font-size:.8rem;animation:pulse 1.2s infinite}
 
 /* Insights */
-.insight-item{background:#0f172a;border-radius:8px;padding:.7rem .85rem;margin-bottom:.55rem;border-left:3px solid #334155;cursor:pointer;transition:border-color .2s}
+.insight-item{background:#0f172a;padding:0.75rem;border-radius:8px;margin-bottom:0.5rem}
 .insight-item:hover{border-left-color:#6366f1}
 .insight-item.high{border-left-color:#4ade80}
 .insight-item.plausible{border-left-color:#f59e0b}
@@ -306,7 +315,7 @@ select.f-input option{background:#1e293b}
 
   <button class="submit-btn" id="submitBtn" onclick="sendQuery()">🚀 Отправить</button>
   <div id="loading" class="loading">⏳ Генерация и верификация...</div>
-  <div id="pipeline" class="pipeline"></div>
+  <div id="pipeline-result" class="pipeline"></div>
 </div>
 
 <!-- ГРАФ 3D -->
@@ -560,23 +569,24 @@ select.f-input option{background:#1e293b}
     <div id="tracker-settings" class="tracker-tab-content">
       <div class="cfg-toolbar">
         <button class="cfg-btn primary" onclick="saveAllProviders()">💾 Сохранить всё</button>
+        <button class="cfg-btn primary" onclick="saveToEnv()">💾 Сохранить в .env (перезапуск сервера нужен)</button>
         <button class="cfg-btn" onclick="toggleAddForm()">➕ Добавить провайдера</button>
       </div>
       <div id="addProviderForm">
         <div style="font-size:.75rem;color:#6366f1;margin-bottom:.75rem;font-weight:600">➕ Новый провайдер</div>
         <div class="field-grid">
-          <div class="f-group"><div class="f-label">ID</div><input class="f-input" id="np-id" placeholder="groq_third"></div>
-          <div class="f-group"><div class="f-label">Провайдер</div><select class="f-input" id="np-provider" onchange="onNewProviderChange()"><option value="groq">Groq</option><option value="gemini">Gemini</option><option value="huggingface">HuggingFace</option></select></div>
+          <div class="f-group"><div class="f-label">ID</div><input class="f-input" id="np-id" placeholder="custom_provider_123"></div>
+          <div class="f-group"><div class="f-label">Провайдер</div><input class="f-input" id="np-provider" placeholder="openrouter / nvidia / custom"></div>
           <div class="f-group"><div class="f-label">Аккаунт</div><input class="f-input" id="np-account" placeholder="Nexus / Roman"></div>
-          <div class="f-group"><div class="f-label">Название</div><input class="f-input" id="np-label" placeholder="Groq · Third"></div>
+          <div class="f-group"><div class="f-label">Название</div><input class="f-input" id="np-label" placeholder="OpenRouter / NVIDIA / Custom"></div>
           <div class="f-group full"><div class="f-label">API Ключ</div><input class="f-input" id="np-key" type="password" placeholder="gsk_..."></div>
-          <div class="f-group"><div class="f-label">API Base URL</div><input class="f-input" id="np-base"></div>
-          <div class="f-group"><div class="f-label">Модель</div><select class="f-input" id="np-model"></select></div>
+          <div class="f-group"><div class="f-label">API Base URL</div><input class="f-input" id="np-base" placeholder="https://api.example.com"></div>
+          <div class="f-group"><div class="f-label">Модель</div><input class="f-input" id="np-model" placeholder="default / gpt-4o-mini / custom-model"></div>
         </div>
         <div style="margin-top:.6rem"><div class="f-label" style="margin-bottom:.4rem">Роли</div><div class="role-checks"><label><input type="checkbox" id="np-role-gen"> generator</label><label><input type="checkbox" id="np-role-ver"> verifier</label></div></div>
         <div style="display:flex;gap:.5rem;margin-top:.85rem"><button class="cfg-btn primary" onclick="addProvider()">Добавить</button><button class="cfg-btn" onclick="toggleAddForm()">Отмена</button></div>
       </div>
-      <div id="provider-cards"></div>
+      <div id="providerCards"></div>
     </div>
   </div>
 </div>
@@ -593,6 +603,10 @@ let currentModalArtId = null;
 let trackerKnownModels = {};
 let trackerProviders = [];
 let allArtifactsForClarify = [];
+
+function safeGet(obj, path, def = '—') {
+  return path.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : def), obj);
+}
 
 // ══════════════════════════════════════════════════════
 // NODE COLORS (единый источник истины для всех вкладок)
@@ -736,6 +750,94 @@ Reasoning: ${escHtml(a.reasoning_summary||'—')}</pre>
   </div>`;
 }
 
+function renderPipelineResult(data) {
+  const container = document.getElementById('pipeline-result');
+  if (!container) return;
+
+  const gen = safeGet(data, 'generation', safeGet(data, 'gen', {}));
+  const ver = safeGet(data, 'verification', safeGet(data, 'ver', {}));
+  const structural = safeGet(data, 'structural', {});
+  const archivist = safeGet(data, 'archivist', {});
+  const sim = safeGet(data, 'simulation', {});
+  const resonance = safeGet(data, 'resonance', {});
+
+  let html = `<div style="margin-bottom:1rem"><strong>Job ID:</strong> ${data.job_id || data.id || '—'}</div>`;
+
+  html += `
+    <div class="panel">
+      <h3>Generation</h3>
+      <div class="detail-field"><div class="detail-key">Гипотеза</div><div class="detail-val">${escHtml(safeGet(gen, 'hypothesis'))}</div></div>
+      <div class="detail-field"><div class="detail-key">Механизм</div><div class="detail-val">${escHtml(safeGet(gen, 'mechanism'))}</div></div>
+      <div class="detail-field"><div class="detail-key">Домен</div><div class="detail-val">${escHtml(safeGet(gen, 'domain', data.domain))}</div></div>
+      <div class="detail-field"><div class="detail-key">b_sync</div><div class="detail-val">${safeGet(gen, 'b_sync')}</div></div>
+      <div class="detail-field"><div class="detail-key">Модель</div><div class="detail-val">${escHtml(data.gen_model || '—')}</div></div>
+    </div>`;
+
+  const verdictColor = ver.verdict === 'VALID' ? '#4ade80' : ver.verdict === 'WEAK' ? '#fbbf24' : '#ef4444';
+  html += `
+    <div class="panel">
+      <h3>Verification</h3>
+      <div class="detail-field"><div class="detail-key">Вердикт</div><div class="detail-val" style="color:${verdictColor}">${ver.verdict || '—'}</div></div>
+      <div class="detail-field"><div class="detail-key">Confidence</div><div class="detail-val">${ver.confidence || '—'}</div></div>
+      <div class="detail-field"><div class="detail-key">Issues</div><div class="detail-val">${ver.issues && ver.issues.length ? ver.issues.join(', ') : 'нет'}</div></div>
+      <div class="detail-field"><div class="detail-key">Модель</div><div class="detail-val">${escHtml(data.ver_model || '—')}</div></div>
+    </div>`;
+
+  if (structural.artifact_type) {
+    html += `
+      <div class="panel">
+        <h3>Structural Analysis</h3>
+        <div class="detail-field"><div class="detail-key">Тип артефакта</div><div class="detail-val">${safeGet(structural, 'artifact_type')}</div></div>
+        <div class="detail-field"><div class="detail-key">Стабильность</div><div class="detail-val">${safeGet(structural, 'stability')} ${structural.is_stable ? '✓' : '✗'}</div></div>
+        <div class="detail-field"><div class="detail-key">Specificity</div><div class="detail-val">${safeGet(structural, 'specificity')}</div></div>
+        <div class="detail-field"><div class="detail-key">Phase Signal</div><div class="detail-val">${safeGet(structural, 'phase_signal.signal')} (density: ${safeGet(structural, 'phase_signal.density')})</div></div>
+      </div>`;
+  }
+
+  const fourD = safeGet(data, 'four_d_matrix', safeGet(gen, 'four_d_matrix', null));
+  if (fourD && typeof fourD === 'object') {
+    html += `<div class="panel"><h3>4D Matrix</h3>`;
+    renderFourDMatrix(fourD, data.job_id);
+    html += `</div>`;
+  }
+
+  if (sim.stability_score !== undefined) {
+    const scColor = sim.stability_score >= 0.7 ? '#4ade80' : '#fbbf24';
+    html += `
+      <div class="panel">
+        <h3>MathCore Simulation</h3>
+        <div class="detail-field"><div class="detail-key">Stability Score</div><div class="detail-val" style="color:${scColor}">${(sim.stability_score*100).toFixed(0)}%</div></div>
+        <div class="detail-field"><div class="detail-key">λ_max</div><div class="detail-val">${sim.lyapunov_max || '—'}</div></div>
+        <div class="detail-field"><div class="detail-key">Survival</div><div class="detail-val">${sim.survival_verified ? '✓ Выжил' : '✗ Неустойчив'}</div></div>
+      </div>`;
+  }
+
+  if (resonance.insights && resonance.insights.length > 0) {
+    html += `<div class="panel"><h3>4D Resonance Insights</h3>`;
+    resonance.insights.forEach(ins => {
+      const pColor = ins.probability >= 0.7 ? '#4ade80' : ins.probability >= 0.5 ? '#fbbf24' : '#ef4444';
+      html += `
+        <div style="margin:8px 0;padding:10px;background:#1e293b;border-radius:8px">
+          <span style="color:${pColor}">${(ins.probability*100).toFixed(0)}%</span> 
+          ${escHtml(ins.source_domain)} → ${escHtml(ins.target_domain)}
+          <span style="float:right;font-size:0.75rem;color:#64748b">iso=${ins.iso_4d}</span>
+        </div>`;
+    });
+    html += `</div>`;
+  }
+
+  if (archivist.novelty) {
+    html += `
+      <div class="panel">
+        <h3>Archivist Evaluation</h3>
+        <div class="detail-field"><div class="detail-key">Novelty</div><div class="detail-val">${safeGet(archivist, 'novelty')} (${safeGet(archivist, 'novelty_score')})</div></div>
+        <div class="detail-field"><div class="detail-key">Cross-domain links</div><div class="detail-val">${archivist.cross_domain_links ? archivist.cross_domain_links.join(' | ') : '—'}</div></div>
+      </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
 // ══════════════════════════════════════════════════════
 // SEND QUERY
 // ══════════════════════════════════════════════════════
@@ -744,11 +846,11 @@ async function sendQuery() {
   if (!text) return;
   const btn = document.getElementById('submitBtn');
   const loading = document.getElementById('loading');
-  const pipeline = document.getElementById('pipeline');
+  const pipeline = document.getElementById('pipeline-result');
   const refNotice = document.getElementById('ref-update-notice');
   btn.disabled = true;
   loading.classList.add('active');
-  pipeline.innerHTML = '';
+  if (pipeline) pipeline.innerHTML = '';
   refNotice.style.display = 'none';
 
   try {
@@ -775,42 +877,23 @@ async function sendQuery() {
       refNotice.style.display = 'block';
     }
 
-    const s = data.structural || {};
-    const tc = typeColor(s.artifact_type);
-    const ragCtx = data.rag_context || [];
-    pipeline.innerHTML = `
-      <div class="panel">
-        <h3>⚙️ Генератор · <b style="color:#fbbf24">${data.domain||'—'}</b>${ragCtx.length?' · 🧠 RAG:'+ragCtx.length:''}${data.rag_dropped?' · ✂️:'+data.rag_dropped:''} ${modelBadge(data.gen_model)}</h3>
-        <pre>${JSON.stringify(data.generation, null, 2)}</pre>
-      </div>
-      <div class="panel">
-        <h3>🔍 Верификатор ${modelBadge(data.ver_model)}</h3>
-        <pre>${verPanel(data.verification)}</pre>
-      </div>
-      <div class="panel">
-        <h3>✅ Структура</h3>
-        <pre>Тип: <span style="color:${tc}">${s.artifact_type||'—'}</span>
-Stability: ${s.stability||'—'}
-Specificity: ${s.specificity??'—'}
-Centrality: ${s.centrality??'—'}
-Bridge: ${s.is_bridge?'✅ ДА':'нет'}
-Similar: ${(s.similar_invariants||[]).length}
-Phase: ${s.phase_signal?.signal||'—'}
-Domains(window): ${s.phase_signal?.unique_domains??'—'}
-Сохранён: ${data.saved?'✅ ДА (ID: '+data.job_id+')':'нет'}</pre>
-      </div>
-      ${data.archivist ? archivistPanel(data.archivist) : ''}`;
+    _lastData = data;
+    renderPipelineResult(data);
 
-    if (data.generation?.four_d_matrix) {
-      renderFourDMatrix(data.generation.four_d_matrix, data.job_id);
-      renderMathCurrentResult(data);
-      loadInsights();
-      loadMathStats();
+    const fourD = safeGet(data, 'four_d_matrix', safeGet(data, 'generation.four_d_matrix', safeGet(data, 'gen.four_d_matrix', null)));
+    if (fourD && typeof fourD === 'object') {
+      renderFourDMatrix(fourD, data.job_id);
+    } else {
+      renderFourDMatrix(null, data.job_id);
     }
+
+    renderMathCurrentResult(data);
+    loadInsights();
+    loadMathStats();
 
     refreshTrackerDot();
   } catch(err) {
-    pipeline.innerHTML = `<div style="color:#ef4444;padding:1rem">❌ ${err.message}</div>`;
+    if (pipeline) pipeline.innerHTML = `<div style="color:#ef4444;padding:1rem">❌ ${err.message}</div>`;
   } finally {
     btn.disabled = false;
     loading.classList.remove('active');
@@ -1294,98 +1377,201 @@ async function loadTrackerProviders() {
     trackerKnownModels = data.known_models || {};
     renderProviderCards();
     updateNewProviderModels();
-  } catch(err) { console.error(err); }
+  } catch (e) {
+    console.error('Failed to load providers:', e);
+  }
 }
 
 function renderProviderCards() {
-  const container = document.getElementById('provider-cards');
+  const container = document.getElementById('providerCards');
+  if (!container) return;
+
   container.innerHTML = trackerProviders.map((p, i) => {
-    const pc = p.provider==='groq'?'groq':p.provider==='gemini'?'gemini':'hf';
-    const roles = p.roles.map(r=>`<span class="t-badge ${r==='generator'?'gen':'ver'}">${r}</span>`).join(' ');
-    const models = (trackerKnownModels[p.provider]||[]).map(m=>`<option value="${m}" ${m===p.model?'selected':''}>${m}</option>`).join('');
-    return `<div class="provider-card ${p.enabled?'':'disabled'}" id="card-${p.id}">
-      <div class="provider-card-header" onclick="toggleCard('${p.id}')">
-        <span class="enabled-dot" style="background:${p.enabled?'#4ade80':'#475569'}"></span>
-        <span class="pc-label">${escHtml(p.label)}</span>
-        <span class="pc-meta"><span class="t-badge ${pc}">${p.provider}</span><span class="t-badge ${p.account==='Nexus'?'nexus':'roman'}">${p.account}</span>${roles}<span style="color:#334155">pri=${p.priority}</span></span>
-        <span style="color:#334155;font-size:.8rem;margin-left:.5rem">▾</span>
-      </div>
-      <div class="provider-card-body" id="body-${p.id}">
-        <div class="field-grid">
-          <div class="f-group"><div class="f-label">Название</div><input class="f-input" value="${escHtml(p.label)}" onchange="updateProvider(${i},'label',this.value)"></div>
-          <div class="f-group"><div class="f-label">Аккаунт</div><input class="f-input" value="${escHtml(p.account)}" onchange="updateProvider(${i},'account',this.value)"></div>
-          <div class="f-group full"><div class="f-label">API Ключ</div><input class="f-input" type="password" value="${escHtml(p.api_key)}" onchange="updateProvider(${i},'api_key',this.value)" onfocus="this.type='text'" onblur="this.type='password'"></div>
-          <div class="f-group"><div class="f-label">API Base URL</div><input class="f-input" value="${escHtml(p.api_base)}" onchange="updateProvider(${i},'api_base',this.value)"></div>
-          <div class="f-group"><div class="f-label">Модель</div><select class="f-input" onchange="updateProvider(${i},'model',this.value)">${models}<option value="${p.model}" ${!models.includes(p.model)?'selected':''}>— ${p.model}</option></select></div>
-          <div class="f-group"><div class="f-label">Приоритет</div><input class="f-input" type="number" min="1" max="99" value="${p.priority}" onchange="updateProvider(${i},'priority',parseInt(this.value))"></div>
+    const pc = p.provider === 'groq' ? 'groq' :
+               p.provider === 'gemini' ? 'gemini' :
+               p.provider === 'huggingface' ? 'hf' :
+               p.provider === 'nvidia' ? 'nvidia' : 'unknown';
+
+    const rolesHtml = p.roles.map(r => 
+      `<span class="t-badge ${r==='generator'?'gen':'ver'}">${r}</span>`
+    ).join(' ');
+
+    const modelsHtml = (trackerKnownModels[p.provider] || []).map(m => 
+      `<option value="${m}" ${m === p.model ? 'selected' : ''}>${m}</option>`
+    ).join('');
+
+    return `
+      <div class="provider-card ${p.enabled ? '' : 'disabled'}" id="card-${p.id}">
+        <div class="provider-card-header" onclick="toggleCard('${p.id}')">
+          <span class="enabled-dot" style="background:${p.enabled ? '#4ade80' : '#475569'}"></span>
+          <span class="pc-label">${escHtml(p.label)}</span>
+          <span class="pc-meta">
+            <span class="t-badge ${pc}">${p.provider}</span>
+            <span class="t-badge ${p.account === 'Nexus' ? 'nexus' : 'roman'}">${p.account}</span>
+            ${rolesHtml}
+            <span style="color:#334155">pri=${p.priority}</span>
+          </span>
+          <span style="color:#334155;font-size:.8rem;margin-left:.5rem">▾</span>
         </div>
-        <div style="margin-top:.6rem"><div class="f-label" style="margin-bottom:.35rem">Роли</div><div class="role-checks">
-          <label><input type="checkbox" ${p.roles.includes('generator')?'checked':''} onchange="toggleRole(${i},'generator',this.checked)"> generator</label>
-          <label><input type="checkbox" ${p.roles.includes('verifier')?'checked':''} onchange="toggleRole(${i},'verifier',this.checked)"> verifier</label>
-        </div></div>
-        <div class="card-actions">
-          <button class="card-btn" onclick="toggleEnabled(${i})">${p.enabled?'⏸ Отключить':'▶ Включить'}</button>
-          <button class="card-btn danger" onclick="deleteProvider('${p.id}')">🗑 Удалить</button>
+        <div class="provider-card-body" id="body-${p.id}">
+          <div class="field-grid">
+            <div class="f-group"><div class="f-label">Название</div><input class="f-input" value="${escHtml(p.label)}" onchange="updateProvider(${i},'label',this.value)"></div>
+            <div class="f-group"><div class="f-label">Аккаунт</div><input class="f-input" value="${escHtml(p.account)}" onchange="updateProvider(${i},'account',this.value)"></div>
+            <div class="f-group full"><div class="f-label">API Ключ</div><input class="f-input" type="password" value="${escHtml(p.api_key)}" onchange="updateProvider(${i},'api_key',this.value)" onfocus="this.type='text'" onblur="this.type='password'"></div>
+            <div class="f-group"><div class="f-label">API Base URL</div><input class="f-input" value="${escHtml(p.api_base)}" onchange="updateProvider(${i},'api_base',this.value)"></div>
+            <div class="f-group"><div class="f-label">Модель</div><select class="f-input" onchange="updateProvider(${i},'model',this.value)">${modelsHtml}<option value="${p.model}" ${!modelsHtml.includes(p.model) ? 'selected' : ''}>— ${p.model}</option></select></div>
+            <div class="f-group"><div class="f-label">Приоритет</div><input class="f-input" type="number" min="1" max="99" value="${p.priority}" onchange="updateProvider(${i},'priority',parseInt(this.value))"></div>
+          </div>
+          <div style="margin-top:.6rem">
+            <div class="f-label" style="margin-bottom:.35rem">Роли</div>
+            <div class="role-checks">
+              <label><input type="checkbox" ${p.roles.includes('generator')?'checked':''} onchange="toggleRole(${i},'generator',this.checked)"> generator</label>
+              <label><input type="checkbox" ${p.roles.includes('verifier')?'checked':''} onchange="toggleRole(${i},'verifier',this.checked)"> verifier</label>
+            </div>
+          </div>
+          <div class="card-actions">
+            <button class="card-btn" onclick="toggleEnabled(${i})">${p.enabled ? '⏸ Отключить' : '▶ Включить'}</button>
+            <button class="card-btn danger" onclick="deleteProvider('${p.id}')">🗑 Удалить</button>
+          </div>
         </div>
-      </div>
-    </div>`;
+      </div>`;
   }).join('') || '<div style="color:#475569;text-align:center;padding:2rem">Нет провайдеров</div>';
 }
 
-function toggleCard(id) { document.getElementById('body-'+id).classList.toggle('open'); }
-function updateProvider(idx, field, value) { trackerProviders[idx][field] = value; }
-function toggleRole(idx, role, checked) {
-  const roles = trackerProviders[idx].roles || [];
-  trackerProviders[idx].roles = checked ? [...new Set([...roles, role])] : roles.filter(r=>r!==role);
+function toggleCard(id) {
+  const body = document.getElementById('body-' + id);
+  if (body) body.classList.toggle('open');
 }
-function toggleEnabled(idx) { trackerProviders[idx].enabled = !trackerProviders[idx].enabled; renderProviderCards(); }
+
+function updateProvider(idx, field, value) {
+  if (trackerProviders[idx]) {
+    trackerProviders[idx][field] = value;
+  }
+}
+
+function toggleRole(idx, role, checked) {
+  if (!trackerProviders[idx]) return;
+  let roles = trackerProviders[idx].roles || [];
+  if (checked) {
+    if (!roles.includes(role)) roles.push(role);
+  } else {
+    roles = roles.filter(r => r !== role);
+  }
+  trackerProviders[idx].roles = roles;
+}
+
+function toggleEnabled(idx) {
+  if (trackerProviders[idx]) {
+    trackerProviders[idx].enabled = !trackerProviders[idx].enabled;
+    renderProviderCards();
+  }
+}
 
 async function saveAllProviders() {
   try {
-    const res = await fetch('/tracker/providers', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({providers: trackerProviders})});
+    const res = await fetch('/tracker/providers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providers: trackerProviders })
+    });
     const data = await res.json();
-    if (data.ok) { renderProviderCards(); alert(`✅ Сохранено ${data.count} провайдеров`); }
-  } catch(err) { alert('Ошибка: '+err.message); }
+    if (data.ok) {
+      alert(`✅ Сохранено ${data.count || trackerProviders.length} провайдеров`);
+      renderProviderCards();
+    } else {
+      alert('Ошибка сохранения');
+    }
+  } catch (err) {
+    alert('Ошибка: ' + err.message);
+  }
+}
+
+async function saveToEnv() {
+  if (!confirm('Сохранить текущие провайдеры в .env?\nСервер нужно будет перезапустить вручную после этого.')) return;
+
+  try {
+    const res = await fetch('/tracker/save-to-env', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providers: trackerProviders })
+    });
+    const data = await res.json();
+
+    if (data.ok) {
+      alert('✅ Провайдеры сохранены в .env\nПерезапустите сервер для применения изменений.');
+    } else {
+      alert('Ошибка: ' + (data.error || 'неизвестная ошибка'));
+    }
+  } catch (e) {
+    alert('Ошибка соединения: ' + e.message);
+  }
 }
 
 async function deleteProvider(pid) {
   if (!confirm(`Удалить провайдера ${pid}?`)) return;
   try {
-    const res = await fetch(`/tracker/providers/${pid}`, {method:'DELETE'});
+    const res = await fetch(`/tracker/providers/${pid}`, { method: 'DELETE' });
     const data = await res.json();
-    if (data.ok) await loadTrackerProviders();
-  } catch(err) { alert('Ошибка: '+err.message); }
+    if (data.ok) {
+      await loadTrackerProviders();
+    } else {
+      alert('Не удалось удалить');
+    }
+  } catch (err) {
+    alert('Ошибка: ' + err.message);
+  }
 }
 
-function toggleAddForm() { document.getElementById('addProviderForm').classList.toggle('open'); }
-function updateNewProviderModels() {
-  const prov = document.getElementById('np-provider')?.value || 'groq';
-  const sel = document.getElementById('np-model');
-  if (!sel) return;
-  sel.innerHTML = (trackerKnownModels[prov]||[]).map(m=>`<option value="${m}">${m}</option>`).join('');
-  const baseMap = {groq:'https://api.groq.com/openai/v1', gemini:'https://generativelanguage.googleapis.com/v1beta', huggingface:'https://api-inference.huggingface.co/v1'};
-  const base = document.getElementById('np-base');
-  if (base && baseMap[prov]) base.value = baseMap[prov];
+function toggleAddForm() {
+  const form = document.getElementById('addProviderForm');
+  if (form) form.classList.toggle('open');
 }
-function onNewProviderChange() { updateNewProviderModels(); }
+
+function updateNewProviderModels() {
+  // Free-form provider input now uses manual model field, no preset model list needed.
+}
+
+function onNewProviderChange() {
+  // No-op for free-form provider form.
+}
 
 async function addProvider() {
-  const id = document.getElementById('np-id').value.trim().replace(/\s+/g,'_');
-  const provider = document.getElementById('np-provider').value;
-  const account = document.getElementById('np-account').value.trim();
-  const label = document.getElementById('np-label').value.trim();
+  const idField = document.getElementById('np-id').value.trim();
+  const id = idField ? idField.replace(/\s+/g, '_') : 'custom_' + Date.now();
+  const provider = document.getElementById('np-provider').value.trim() || 'custom';
+  const account = document.getElementById('np-account').value.trim() || 'Custom';
+  const label = document.getElementById('np-label').value.trim() || id;
   const api_key = document.getElementById('np-key').value.trim();
   const api_base = document.getElementById('np-base').value.trim();
-  const model = document.getElementById('np-model').value;
+  const model = document.getElementById('np-model').value.trim() || 'default';
   const roles = [];
   if (document.getElementById('np-role-gen').checked) roles.push('generator');
   if (document.getElementById('np-role-ver').checked) roles.push('verifier');
-  if (!id || !api_key || !roles.length) { alert('Заполните ID, API ключ и выберите роль'); return; }
+
+  if (!api_key) {
+    alert('API Key обязателен');
+    return;
+  }
+
+  const newProvider = { id, provider, account, label, api_key, api_base, model, roles, enabled: true, priority: 99 };
+
   try {
-    const res = await fetch('/tracker/providers/add', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, provider, account, label: label||id, api_key, api_base, model, roles, enabled:true, priority:99})});
+    const res = await fetch('/tracker/providers/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newProvider)
+    });
     const data = await res.json();
-    if (data.ok) { toggleAddForm(); await loadTrackerProviders(); }
-  } catch(err) { alert('Ошибка: '+err.message); }
+    if (data.ok) {
+      toggleAddForm();
+      await loadTrackerProviders();
+      alert(`✅ Провайдер "${label}" добавлен. Не забудьте нажать "Сохранить все провайдеры"`);
+    } else {
+      alert('Ошибка добавления');
+    }
+  } catch (err) {
+    alert('Ошибка: ' + err.message);
+  }
 }
 
 // ══════════════════════════════════════════════════════
@@ -1413,7 +1599,13 @@ function escHtml(str) {
 // ══════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════
-window.onload = () => { loadHistory(); loadArtifacts(); refreshTrackerDot(); loadMathStats(); };
+window.onload = () => {
+  loadHistory();
+  loadArtifacts();
+  refreshTrackerDot();
+  loadMathStats();
+  loadTrackerProviders();
+};
 
 // ═════════════════════════════════════════════════════════════════════════════=
 // 4D MATRIX DISPLAY
@@ -1421,9 +1613,23 @@ window.onload = () => { loadHistory(); loadArtifacts(); refreshTrackerDot(); loa
 
 let _lastFourD = null;
 let _lastJobId = null;
+let _lastData = null;
 
 function renderFourDMatrix(fd, jobId) {
-  if (!fd) return;
+  if (!fd) {
+    const data = _lastData || {};
+    fd = safeGet(data, 'four_d_matrix', null) ||
+         safeGet(data, 'generation.four_d_matrix', null) ||
+         safeGet(data, 'gen.four_d_matrix', null) ||
+         safeGet(data, 'data.gen.four_d_matrix', null);
+  }
+
+  if (!fd || typeof fd !== 'object') {
+    document.getElementById('four-d-empty').style.display = 'block';
+    document.getElementById('four-d-matrix-display').style.display = 'none';
+    return;
+  }
+
   _lastFourD = fd;
   if (jobId) _lastJobId = jobId;
 
@@ -1451,10 +1657,10 @@ function renderFourDMatrix(fd, jobId) {
 
   const modelEl = document.getElementById('four-d-model-pill');
   if (d.model) {
-    modelEl.innerHTML = `<span class="four-d-model-badge">${d.model}</span>`;
+    modelEl.innerHTML = `<span class="four-d-model-badge">${escHtml(d.model)}</span>`;
+  } else {
+    modelEl.innerHTML = `<span class="four-d-model-badge" style="opacity:0.5">—</span>`;
   }
-
-  if (jobId) document.getElementById('stress-artifact-id').value = jobId;
 }
 
 function fmtFd(v) {
@@ -1463,21 +1669,25 @@ function fmtFd(v) {
 }
 
 function renderMathCurrentResult(data) {
-  const sim = data.simulation;
-  const res = data.resonance;
-  if (!sim && !res) return;
+  const sim = data.simulation || data.math?.simulation || {};
+  const res = data.resonance || data.math?.resonance || {};
+
+  if (!sim.base_simulation && !res.insights) {
+    document.getElementById('math-current-result').style.display = 'none';
+    return;
+  }
 
   document.getElementById('math-current-result').style.display = 'block';
-  document.getElementById('math-current-id').textContent = data.job_id || '';
+  document.getElementById('math-current-id').textContent = data.job_id || data.id || '';
 
   let html = '';
 
-  if (sim) {
+  if (sim.base_simulation) {
     const sc = sim.stability_score ?? 0;
     const ly = sim.lyapunov_max ?? 0;
     const scColor = sc >= 0.7 ? '#4ade80' : sc >= 0.4 ? '#f59e0b' : '#ef4444';
     const lyColor = ly < 0 ? '#4ade80' : '#ef4444';
-    const lyLabel = ly < 0 ? 'устойчиво (λ<0)' : 'неустойчиво (λ>0)';
+
     html += `
       <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:.75rem">
         <div style="background:#0f172a;border-radius:8px;padding:.6rem 1rem;flex:1;min-width:120px;text-align:center">
@@ -1486,32 +1696,25 @@ function renderMathCurrentResult(data) {
         </div>
         <div style="background:#0f172a;border-radius:8px;padding:.6rem 1rem;flex:1;min-width:120px;text-align:center">
           <div style="font-size:1.5rem;font-weight:800;color:${lyColor};font-family:monospace">${ly.toFixed(3)}</div>
-          <div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em">λ_max · ${lyLabel}</div>
+          <div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em">λ_max · ${ly < 0 ? 'устойчиво' : 'неустойчиво'}</div>
         </div>
         <div style="background:#0f172a;border-radius:8px;padding:.6rem 1rem;flex:1;min-width:120px;text-align:center">
           <div style="font-size:1.5rem;font-weight:800;color:#60a5fa;font-family:monospace">${sim.cpu_time_s ?? '—'}s</div>
           <div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em">cpu time</div>
         </div>
-      </div>
-      <div style="font-size:.75rem;color:#94a3b8">
-        Граница: η_max=${sim.eta_critical ?? '—'} · 
-        K_above_Kc: ${sim.bifurcation_boundary?.K_above_critical ? '<span style="color:#4ade80">ДА</span>' : '<span style="color:#ef4444">НЕТ</span>'} · 
-        τ_max_stable=${sim.bifurcation_boundary?.tau_max_stable ?? '—'} · 
-        Выжил: <b style="color:${sim.survival_verified?'#4ade80':'#ef4444'}">${sim.survival_verified ? 'ДА' : 'НЕТ'}</b>
       </div>`;
   }
 
-  if (res && res.insights && res.insights.length) {
+  if (res.insights && res.insights.length) {
     html += `<div style="margin-top:.85rem;font-size:.72rem;color:#6366f1;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.4rem">
       Top 4D резонансы (${res.total})</div>`;
     res.insights.forEach(ins => {
       const p = ins.probability ?? 0;
       const band = ins.confidence_band || 'low';
-      const domArrow = `${ins.source_domain} → ${ins.target_domain}`;
       html += `<div class="insight-item ${band}" style="margin-bottom:.4rem">
         <div style="display:flex;align-items:center;gap:.5rem">
           <span class="insight-prob" style="color:${p>=0.7?'#4ade80':p>=0.5?'#f59e0b':'#ef4444'}">${(p*100).toFixed(0)}%</span>
-          <span class="insight-domains">${escHtml(domArrow)}</span>
+          <span class="insight-domains">${escHtml(`${ins.source_domain} → ${ins.target_domain}`)}</span>
           <span class="prob-badge ${band}" style="margin-left:auto">${band}</span>
         </div>
         <div class="insight-meta">iso_4d=${ins.iso_4d ?? '—'} · scale=${ins.scale_align ?? '—'} · proto=${(ins.prototype_id||'').substring(0,8)}</div>

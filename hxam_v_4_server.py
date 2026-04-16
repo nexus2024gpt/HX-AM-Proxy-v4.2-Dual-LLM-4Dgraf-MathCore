@@ -915,6 +915,27 @@ def tracker_provider_add(req: ProviderAddRequest):
         raise HTTPException(400, "Ошибка добавления провайдера")
     return {"ok": True}
 
+@app.post("/tracker/save-to-env")
+def tracker_save_to_env(req: ProvidersUpdateRequest):
+    try:
+        ok = tracker.update_providers(req.providers)
+        if not ok:
+            raise HTTPException(400, "Ошибка сохранения провайдеров")
+
+        env_lines = ["# === HX-AM Proxy v4.2 Environment (auto-generated) ==="]
+        for p in tracker._providers:
+            prefix = p.provider.upper()
+            env_lines.append(f"{prefix}_API_KEY={p.api_key}")
+            env_lines.append(f"{prefix}_API_BASE={p.api_base}")
+            env_lines.append(f"{prefix}_MODEL={p.model}")
+
+        with open(".env", "w", encoding="utf-8") as f:
+            f.write("\n".join(env_lines) + "\n")
+
+        return {"ok": True, "message": "Saved to .env"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 @app.delete("/tracker/providers/{provider_id}")
 def tracker_provider_delete(provider_id: str):
     ok = tracker.delete_provider(provider_id)
