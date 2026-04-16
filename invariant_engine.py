@@ -310,8 +310,7 @@ class InvariantGraph:
         self.G.nodes[node_id]["linked_to"] = linked
         multipliers = {"PHENOMENAL": 0.9, "NOVEL": 0.6, "KNOWN": 0.3}
         mul = next((v for k, v in multipliers.items() if novelty.startswith(k)), 0.1)
-        for neighbor in list(self.G.neighbors(node_id)):
-            edge_data = self.G[node_id][neighbor]
+        for u, v, edge_data in list(self.G.edges(node_id, data=True)):
             edge_data["novelty_weight"] = round(edge_data.get("weight", 0.5) * mul, 3)
         self._save()
         _logger.info(f"Archivist updated node {node_id}: novelty={novelty} score={novelty_score}")
@@ -335,6 +334,9 @@ class InvariantGraph:
             elif has_links and not has_edges:
                 data["edges"] = data["links"]
             G = nx.node_link_graph(data)
+            if G.is_multigraph():
+                _logger.warning("InvariantGraph: converting MultiGraph → Graph on load")
+                G = nx.Graph(G)
             _logger.info(
                 f"InvariantGraph: loaded {G.number_of_nodes()} nodes, "
                 f"{G.number_of_edges()} edges"

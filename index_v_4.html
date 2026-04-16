@@ -826,7 +826,7 @@ function renderPipelineResult(data) {
     html += `</div>`;
   }
 
-  if (archivist.novelty) {
+  if (archivist && archivist.novelty) {
     html += `
       <div class="panel">
         <h3>Archivist Evaluation</h3>
