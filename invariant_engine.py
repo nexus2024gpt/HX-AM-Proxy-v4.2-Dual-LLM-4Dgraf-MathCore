@@ -118,6 +118,29 @@ class SemanticSpace:
             self.vectors.append(vec)
             self._id_to_idx[e["id"]] = i
         _logger.info(f"SemanticSpace: loaded {len(self.vectors)} vectors")
+        self._load_four_d_index()
+
+    def _load_four_d_index(self):
+        """Загружает 4D-векторы из four_d_index.jsonl в память при старте."""
+        idx_path = Path("artifacts/four_d_index.jsonl")
+        if not idx_path.exists():
+            return
+        loaded = 0
+        with open(idx_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                    art_id = e.get("id", "")
+                    vec_list = e.get("vector")
+                    if art_id and vec_list:
+                        self._four_d_vecs[art_id] = np.array(vec_list, dtype=np.float64)
+                        loaded += 1
+                except Exception:
+                    continue
+        _logger.info(f"SemanticSpace: loaded {loaded} 4D vectors from four_d_index")
 
     def nearest(self, invariant: str, top_k: int = 5, threshold: float = 0.65) -> list:
         if not self.vectors:

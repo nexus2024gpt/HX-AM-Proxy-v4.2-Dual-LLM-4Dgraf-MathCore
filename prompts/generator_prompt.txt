@@ -24,11 +24,13 @@ REQUIRED fields (exact spelling required):
     K = coupling constant [0,2]
     K_c = critical coupling [0,2]
     p = percolation probability [0,1]
-    model = one of: kuramoto | percolation | lotka_volterra | ising | delay | graph_invariant
-  "time": {"tau": float, "H": float, "freq": float}
-    tau = characteristic lag/delay [0,20]
-    H = Hurst exponent [0,1]
-    freq = cycle frequency ω [0,10]
+    model = choose by mechanism keyword:
+      oscillator/sync/phase/rhythm/neural/cardiac → kuramoto
+      epidemic/spread/threshold/cascade/network-failure → percolation
+      binary/opinion/spin/voting/phase-transition/magnet → ising
+      predator/competition/ecology/arms-race/population → lotka_volterra
+      feedback/memory/climate/hormonal/delayed-response → delay
+      topology/graph/community/hub/connectivity/invariant → graph_invariant
 
 ANTIPATTERNS (never use):
 - DO NOT copy phrases from RAG context

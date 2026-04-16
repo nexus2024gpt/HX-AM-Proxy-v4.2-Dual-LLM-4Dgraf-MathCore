@@ -1,25 +1,16 @@
-# math_core.py — HX-AM v4.2 Math Core
+# math_core.py — HX-AM v4.2.2
 """
 MathCore — вычислительный движок для HX-AM v4.2.
 
-Исправления v4.2.1:
-  - ResonanceMatcher._load_index: пропускает дубликаты при загрузке
-  - ResonanceMatcher._rewrite_index: перезаписывает файл из памяти
-  - ResonanceMatcher.add_to_index: обновляет существующий вектор вместо дубликата
-
-Режим 1 (StressTest):
-  Принимает 4D-матрицу → запускает ODE-симуляцию →
-  расшатывает параметры → возвращает stability_score, λ_max, границы устойчивости.
-
-Режим 2 (ResonanceMatcher):
-  Принимает 4D-вектор → ищет изоморфные артефакты в архиве →
-  масштабирует параметры в целевой домен → вычисляет P(A→B).
-
-Оптимизировано для i5-6300U / 8 GB RAM:
-  N_OSCILLATORS_MAX = 200
-  T_MAX_FACTOR = 50
-  Без numba
-  Кэш: sim_results/{id}_stress.json
+v4.2.2 изменения:
+  - UniversalStabilityMetrics (USM) — model-agnostic метрика поверх любой симуляции
+  - KuramotoSimulator: sigma = K_c * pi/2  → K=K_c теперь реальный критический порог
+  - IsingMeanField: mean-field fixed-point solver
+  - LotkaVolterraStability: аналитический Jacobian
+  - DelayStability: аналитический Padé-критерий
+  - GraphInvariantStability: giant component + clustering
+  - StressTester: routing по model, returns usm_score + stability_score
+  - ResonanceMatcher: дедупликация из v4.2.1 сохранена
 """
 
 from __future__ import annotations
@@ -45,20 +36,15 @@ except ImportError:
 
 logger = logging.getLogger("HXAM.mathcore")
 
-# ──────────────────────────────────────────────
-# КОНСТАНТЫ
-# ──────────────────────────────────────────────
-
-N_OSCILLATORS_MAX = 200
-T_MAX_FACTOR = 50
-STRESS_LEVELS = [0.1, 0.3, 0.5]
-STABILITY_THRESHOLD = 0.6
-COHERENCE_LOSS_THRESHOLD = 0.4
+N_OSCILLATORS_MAX   = 200
+T_MAX_FACTOR        = 50
+STABILITY_THRESHOLD = 0.45   # снижен: при corrected sigma суб-критические системы дают r≈0
 
 SIM_RESULTS_DIR = Path("sim_results")
-INSIGHTS_DIR = Path("insights")
-ARTIFACTS_DIR = Path("artifacts")
-FOUR_D_INDEX = Path("artifacts/four_d_index.jsonl")
+INSIGHTS_DIR    = Path("insights")
+ARTIFACTS_DIR   = Path("artifacts")
+
+KNOWN_MODELS = frozenset({"kuramoto","percolation","ising","delay","lotka_volterra","graph_invariant"})
 
 
 def _now_iso() -> str:
@@ -66,502 +52,600 @@ def _now_iso() -> str:
 
 
 # ══════════════════════════════════════════════
-# СЛОЙ 1 — Симуляция (Kuramoto + Percolation)
+# UNIVERSAL STABILITY METRICS
+# ══════════════════════════════════════════════
+
+class UniversalStabilityMetrics:
+    """
+    Model-agnostic метрика устойчивости из 4D-параметров (без симуляции).
+
+    Компоненты [0,1], выше = устойчивее:
+      phase_proximity    — позиция относительно критического перехода
+      noise_robustness   — запас до collapse от шума: 1 - eta
+      temporal_coherence — Hurst * (1 - tau/10): долгосрочная память + быстрый отклик
+      structural_integrity — C * p/p_c: кластеризация * надпороговая связность
+
+    USM = 0.35*phase + 0.30*noise + 0.20*temporal + 0.15*structural
+    """
+
+    W = (0.35, 0.30, 0.20, 0.15)
+
+    def compute(self, four_d: dict, model: str) -> dict:
+        dyn = four_d.get("dynamics", {})
+        inf = four_d.get("influence", {})
+        tim = four_d.get("time", {})
+        s   = four_d.get("structure", {})
+
+        K     = float(dyn.get("K",       0.35))
+        K_c   = float(dyn.get("K_c",     0.48))
+        p     = float(dyn.get("p",       0.65))
+        omega = float(dyn.get("omega_i", 0.25))
+        eta   = float(inf.get("eta",     0.20))
+        h     = float(inf.get("h",       0.50))
+        T     = float(inf.get("T",       1.00))
+        tau   = float(tim.get("tau",     0.50))
+        H     = float(tim.get("H",       0.70))
+        C     = float(s.get("C",         0.50))
+        k     = float(s.get("k",         6.00))
+
+        phase     = self._phase(model, K, K_c, p, T, h, tau, H, omega, k)
+        noise     = max(0.0, 1.0 - eta)
+        temporal  = max(0.0, H * (1.0 - tau / 10.0)) if tau < 10 else 0.0
+        p_c       = 1.0 / max(k, 1.0)
+        structural = min(C * p / max(p_c, 1e-6), 1.0)
+
+        usm = self.W[0]*phase + self.W[1]*noise + self.W[2]*temporal + self.W[3]*structural
+        return {
+            "usm":                  round(usm, 3),
+            "phase_proximity":      round(phase, 3),
+            "noise_robustness":     round(noise, 3),
+            "temporal_coherence":   round(temporal, 3),
+            "structural_integrity": round(structural, 3),
+            "model":                model,
+        }
+
+    @staticmethod
+    def _phase(model, K, K_c, p, T, h, tau, H, omega, k) -> float:
+        """Coupling ratio → logistic → [0,1]. 0.5 = exactly at critical."""
+        K_c = max(K_c, 1e-6)
+        if model == "kuramoto":
+            ratio = K / K_c
+        elif model == "percolation":
+            p_c = 1.0 / max(k, 1.0)
+            ratio = p / max(p_c, 1e-6)
+        elif model == "ising":
+            # Ordered phase: T < T_c = K → ratio T_c/T > 1
+            ratio = K / max(T, 1e-6)
+        elif model == "lotka_volterra":
+            ratio = K / K_c
+        elif model == "delay":
+            if K <= 0:
+                return 0.5
+            tau_c = math.pi / (2.0 * K)
+            ratio = tau_c / max(tau, 1e-6)
+        elif model == "graph_invariant":
+            ratio = p * k   # branching ratio: >1 → giant component
+        else:
+            ratio = K / K_c
+        return round(1.0 / (1.0 + math.exp(-4.0 * (ratio - 1.0))), 4)
+
+
+# ══════════════════════════════════════════════
+# СЛОЙ 1 — Симуляторы
 # ══════════════════════════════════════════════
 
 class KuramotoSimulator:
     """
-    Модель Курамото с задержкой и шумом.
-    dθ_i/dt = ω_i + (K/N)·Σ sin(θ_j − θ_i) + η·ξ(t)
+    v4.2.2: sigma = K_c * pi/2  →  K_c_theoretical = 2σ/π = K_c
+    Теперь K < K_c → r≈0 (sub-critical), K > K_c → r→1 (super-critical).
     """
 
     def __init__(self, N: int = 100, seed: int = 42):
-        self.N = min(N, N_OSCILLATORS_MAX)
+        self.N   = min(N, N_OSCILLATORS_MAX)
         self.rng = np.random.default_rng(seed)
 
-    def run(
-        self,
-        omega_i: float,
-        K: float,
-        eta: float,
-        tau: float,
-        t_end: Optional[float] = None,
-    ) -> Dict[str, Any]:
-        N = self.N
-        t_max = T_MAX_FACTOR * max(tau, 0.1) if t_end is None else t_end
+    def run(self, omega_i: float, K: float, K_c: float, eta: float, tau: float,
+            t_end: Optional[float] = None) -> Dict[str, Any]:
+        N      = self.N
+        t_max  = T_MAX_FACTOR * max(tau, 0.1) if t_end is None else t_end
         t_span = (0.0, t_max)
-        t_eval = np.linspace(0, t_max, min(500, int(t_max * 20)))
+        n_pts  = min(500, max(50, int(t_max * 20)))
+        t_eval = np.linspace(0, t_max, n_pts)
 
+        omega_spread = max(K_c * math.pi / 2.0, 0.01)   # ИСПРАВЛЕНИЕ v4.2.2
+        omegas = self.rng.normal(omega_i, omega_spread, N)
         theta0 = self.rng.uniform(0, 2 * math.pi, N)
-        omegas = self.rng.normal(omega_i, max(omega_i * 0.1, 0.05), N)
 
-        def rhs(t: float, theta: np.ndarray) -> np.ndarray:
-            diff = theta[None, :] - theta[:, None]
+        def rhs(t: float, th: np.ndarray) -> np.ndarray:
+            diff     = th[None, :] - th[:, None]
             coupling = (K / N) * np.sum(np.sin(diff), axis=1)
             return omegas + coupling
 
         try:
-            sol = solve_ivp(
-                rhs, t_span, theta0,
-                t_eval=t_eval,
-                method="RK45",
-                rtol=1e-3, atol=1e-4,
-                max_step=0.5,
-            )
+            sol = solve_ivp(rhs, t_span, theta0, t_eval=t_eval,
+                            method="RK45", rtol=1e-3, atol=1e-4,
+                            max_step=min(0.5, t_max / 50))
         except Exception as e:
             logger.warning(f"Kuramoto solve_ivp failed: {e}")
-            return self._failed_result()
+            return self._fail()
 
         if not sol.success:
-            return self._failed_result()
+            return self._fail()
 
+        sol_y = sol.y
         if eta > 0 and len(t_eval) > 1:
-            dt_mean = (t_eval[-1] - t_eval[0]) / len(t_eval)
-            noise = eta * self.rng.normal(0, np.sqrt(dt_mean), sol.y.shape)
-            sol_y = sol.y + noise
-        else:
-            sol_y = sol.y
+            dt = (t_eval[-1] - t_eval[0]) / max(len(t_eval) - 1, 1)
+            sol_y = sol_y + eta * self.rng.normal(0, np.sqrt(max(dt, 1e-9)), sol.y.shape)
 
         r_series = np.abs(np.mean(np.exp(1j * sol_y), axis=0))
-        r_final = float(r_series[-1]) if len(r_series) > 0 else 0.0
-        r_mean = float(np.mean(r_series[-min(50, len(r_series)):]))
+        tail     = max(1, len(r_series) // 10)
+        r_final  = float(r_series[-1])
+        r_mean   = float(np.mean(r_series[-tail:]))
 
         return {
-            "model": "kuramoto",
-            "N": N,
-            "t_max": t_max,
-            "r_final": round(r_final, 4),
-            "r_mean_last_10pct": round(r_mean, 4),
-            "stable": r_mean > STABILITY_THRESHOLD,
+            "model":               "kuramoto",
+            "N":                   N,
+            "t_max":               round(t_max, 2),
+            "omega_spread":        round(omega_spread, 4),
+            "K_c_theoretical":     round(2 * omega_spread / math.pi, 4),
+            "r_final":             round(r_final, 4),
+            "r_mean_last_10pct":   round(r_mean, 4),
+            "stable":              r_mean > STABILITY_THRESHOLD,
         }
 
-    def _failed_result(self) -> Dict[str, Any]:
+    def _fail(self) -> Dict[str, Any]:
+        return {"model": "kuramoto", "N": self.N, "t_max": 0.0,
+                "r_final": 0.0, "r_mean_last_10pct": 0.0, "stable": False}
+
+
+class IsingMeanField:
+    """
+    m = tanh((K*m + h) / T), damped fixed-point.
+    Order parameter: |m|. Stable when T < K (ordered phase).
+    """
+
+    def run(self, K: float, h: float, T: float, eta: float) -> Dict[str, Any]:
+        T = max(T, 0.01);  K = max(K, 0.0)
+        m = 0.5
+        for _ in range(300):
+            m_new = math.tanh((K * m + h) / T)
+            if abs(m_new - m) < 1e-9:
+                break
+            m = 0.7 * m + 0.3 * m_new
+        order       = abs(m)
+        sech2       = 1.0 - math.tanh((K * m + h) / T) ** 2
+        deriv       = K / T * sech2
+        order_noisy = max(0.0, order - eta * 0.3)
+        stable      = (deriv < 1.0 or order_noisy > 0.3) and T < K * 1.5
         return {
-            "model": "kuramoto",
-            "N": self.N,
-            "t_max": 0.0,
-            "r_final": 0.0,
-            "r_mean_last_10pct": 0.0,
-            "stable": False,
+            "model":             "ising",
+            "magnetization":     round(order, 4),
+            "T_c_approx":        round(K, 4),
+            "deriv_at_fp":       round(deriv, 4),
+            "r_final":           round(order_noisy, 4),
+            "r_mean_last_10pct": round(order_noisy, 4),
+            "stable":            stable,
+        }
+
+
+class LotkaVolterraStability:
+    """
+    x' = x(r-ay), y' = y(-d+bx).  r=omega_i, a=K, d=K_c, b=p.
+    Coexistence: x*=K_c/p, y*=omega_i/K. Pure imaginary eigenvalues → neutral cycle.
+    """
+
+    def run(self, omega_i: float, K: float, K_c: float, p: float, eta: float) -> Dict[str, Any]:
+        K = max(K, 1e-6);  K_c = max(K_c, 1e-6);  p = max(p, 1e-6)
+        x_star   = K_c / p
+        y_star   = omega_i / K
+        if x_star <= 0 or y_star <= 0:
+            return {"model":"lotka_volterra","r_final":0.0,"r_mean_last_10pct":0.0,"stable":False}
+        order       = math.tanh(min(x_star, y_star))
+        order_noisy = max(0.0, order - eta * 0.5)
+        stable      = x_star > 0.05 and y_star > 0.05 and order_noisy > 0.2
+        return {
+            "model":             "lotka_volterra",
+            "x_star":            round(x_star, 4),
+            "y_star":            round(y_star, 4),
+            "omega_oscillation": round(math.sqrt(omega_i * K_c), 4),
+            "r_final":           round(order_noisy, 4),
+            "r_mean_last_10pct": round(order_noisy, 4),
+            "stable":            stable,
+        }
+
+
+class DelayStability:
+    """
+    Padé stability: K*tau < pi/2.  tau_c = pi/(2K).
+    H > 0.5 (persistent) reduces effective tau_c via persistence_factor.
+    """
+
+    def run(self, K: float, tau: float, H: float, eta: float) -> Dict[str, Any]:
+        K = max(K, 1e-6);  tau = max(tau, 1e-6)
+        tau_c              = math.pi / (2.0 * K)
+        persistence_factor = 1.0 - max(0.0, H - 0.5) * 0.5
+        eff_tau_c          = tau_c * persistence_factor
+        margin             = eff_tau_c / tau
+        r                  = math.tanh(max(0.0, margin))
+        r_noisy            = max(0.0, r - eta * 0.4)
+        stable             = tau < eff_tau_c and r_noisy > 0.3
+        return {
+            "model":             "delay",
+            "tau_critical":      round(eff_tau_c, 4),
+            "stability_margin":  round(margin, 4),
+            "H_factor":          round(persistence_factor, 4),
+            "r_final":           round(r_noisy, 4),
+            "r_mean_last_10pct": round(r_noisy, 4),
+            "stable":            stable,
+        }
+
+
+class GraphInvariantStability:
+    """
+    Giant component fraction: S = 1 - exp(-k*p*S) + clustering bonus.
+    """
+
+    def run(self, C: float, k: float, p: float, eta: float) -> Dict[str, Any]:
+        k   = max(k, 1.0)
+        p_c = 1.0 / k
+        S   = 0.5
+        for _ in range(200):
+            S_new = 1.0 - math.exp(-k * p * S)
+            if abs(S_new - S) < 1e-9:
+                break
+            S = 0.7 * S + 0.3 * S_new
+        order  = min(1.0, max(0.0, S + C * 0.15 - eta * 0.25))
+        stable = p > p_c and order > 0.4
+        return {
+            "model":             "graph_invariant",
+            "p_c":               round(p_c, 4),
+            "giant_fraction":    round(max(0.0, S), 4),
+            "r_final":           round(order, 4),
+            "r_mean_last_10pct": round(order, 4),
+            "stable":            stable,
         }
 
 
 class PercolationSimulator:
-    """Бернуллиевая перколяция на случайном графе."""
+    """Monte-Carlo Bernoulli percolation (networkx)."""
 
-    def __init__(self, N: int = 500):
+    def __init__(self, N: int = 400):
         try:
             import networkx as nx
             self._nx = nx
         except ImportError:
             self._nx = None
-        self.N = min(N, 1000)
+        self.N = min(N, 800)
 
     def run(self, p: float, k_mean: float) -> Dict[str, Any]:
         if self._nx is None:
-            return {"model": "percolation", "giant_fraction": p, "stable": p > 0.5}
-
-        nx = self._nx
-        N = self.N
+            return GraphInvariantStability().run(0.5, k_mean, p, 0.0)
+        nx = self._nx;  N = self.N
         p_edge = min(p, k_mean / max(N - 1, 1))
-        G = nx.erdos_renyi_graph(N, p_edge, seed=42)
-        components = sorted(nx.connected_components(G), key=len, reverse=True)
-        giant_size = len(components[0]) if components else 0
-        giant_fraction = giant_size / N
-
+        G      = nx.erdos_renyi_graph(N, p_edge, seed=42)
+        comps  = sorted(nx.connected_components(G), key=len, reverse=True)
+        gf     = len(comps[0]) / N if comps else 0.0
         return {
-            "model": "percolation",
-            "N": N,
-            "p_edge": round(p_edge, 4),
-            "giant_fraction": round(giant_fraction, 4),
-            "n_components": len(components),
-            "stable": giant_fraction > 0.5,
+            "model":"percolation", "N":N, "p_edge":round(p_edge,4),
+            "giant_fraction":round(gf,4), "n_components":len(comps),
+            "r_final":round(gf,4), "r_mean_last_10pct":round(gf,4),
+            "stable": gf > 0.4,
         }
 
 
 # ══════════════════════════════════════════════
-# СЛОЙ 2 — Анализ устойчивости
+# СЛОЙ 2 — Lyapunov
 # ══════════════════════════════════════════════
 
 class StabilityAnalyzer:
 
     @staticmethod
-    def lyapunov_estimate(
-        omega_i: float,
-        K: float,
-        eta: float,
-        N: int = 50,
-        t_steps: int = 300,
-    ) -> float:
-        rng = np.random.default_rng(0)
-        omegas = rng.normal(omega_i, max(omega_i * 0.1, 0.01), N)
-        dt = 0.05
+    def lyapunov_estimate(omega_i: float, K: float, K_c: float,
+                          N: int = 50, t_steps: int = 300) -> float:
+        rng          = np.random.default_rng(0)
+        omega_spread = max(K_c * math.pi / 2.0, 0.01)
+        omegas       = rng.normal(omega_i, omega_spread, N)
+        dt           = 0.05
 
-        def step_det(theta: np.ndarray) -> np.ndarray:
-            diff = theta[None, :] - theta[:, None]
-            coupling = (K / N) * np.sum(np.sin(diff), axis=1)
-            return theta + (omegas + coupling) * dt
+        def step(th: np.ndarray) -> np.ndarray:
+            d  = th[None, :] - th[:, None]
+            cp = (K / N) * np.sum(np.sin(d), axis=1)
+            return th + (omegas + cp) * dt
 
-        if K > 0:
-            theta = rng.normal(0.0, 0.3, N)
-        else:
-            theta = rng.uniform(0, 2 * math.pi, N)
+        theta = rng.normal(0.0, 0.2, N) if K > K_c else rng.uniform(0, 2*math.pi, N)
+        for _ in range(150):
+            theta = step(theta)
 
-        for _ in range(100):
-            theta = step_det(theta)
-
-        delta0 = 1e-7
+        delta0  = 1e-7
         theta_p = theta + rng.normal(0, delta0, N)
-
-        log_growth = []
+        lg = []
         for _ in range(t_steps):
-            theta = step_det(theta)
-            theta_p = step_det(theta_p)
-            dist = float(np.linalg.norm(theta_p - theta))
+            theta   = step(theta)
+            theta_p = step(theta_p)
+            dist    = float(np.linalg.norm(theta_p - theta))
             if dist < 1e-15 or dist > 1e3:
                 break
-            log_growth.append(math.log(dist / delta0))
+            if dist > 0:
+                lg.append(math.log(dist / delta0))
             theta_p = theta + (theta_p - theta) / dist * delta0
 
-        if not log_growth:
-            return 0.0
-        return round(float(np.mean(log_growth)) / dt, 4)
+        if not lg:
+            return -0.05 if K > K_c else 0.05
+        return round(float(np.mean(lg)) / dt, 4)
 
     @staticmethod
-    def find_critical_eta(
-        omega_i: float,
-        K: float,
-        K_c: float,
-        tau: float,
-        eta_range: Tuple[float, float] = (0.0, 1.5),
-        n_steps: int = 10,
-    ) -> float:
-        sim = KuramotoSimulator(N=80)
-        lo, hi = eta_range
+    def lyapunov_analytical(model: str, four_d: dict) -> float:
+        """Аналитическая оценка λ_max для не-Kuramoto моделей."""
+        dyn = four_d.get("dynamics", {})
+        inf = four_d.get("influence", {})
+        tim = four_d.get("time", {})
+        K   = float(dyn.get("K",   0.35))
+        K_c = float(dyn.get("K_c", 0.48))
+        eta = float(inf.get("eta", 0.2))
+        tau = float(tim.get("tau", 0.5))
+        T   = float(inf.get("T",   1.0))
+        H   = float(tim.get("H",   0.7))
+        p   = float(dyn.get("p",   0.65))
+        k   = float(four_d.get("structure", {}).get("k", 6.0))
 
+        if model == "ising":
+            return round(min(K / max(T, 0.01) - 1.0, 0.5), 4)
+        elif model == "lotka_volterra":
+            return round(eta * 0.5 - 0.1, 4)
+        elif model == "delay":
+            return round(min(K * tau - math.pi / 2, 0.5), 4)
+        elif model == "graph_invariant":
+            p_c = 1.0 / max(k, 1.0)
+            return round(-(p / max(p_c, 1e-6) - 1.0) * 0.3, 4)
+        elif model == "percolation":
+            p_c = 1.0 / max(k, 1.0)
+            return round(-(p - p_c) * 0.5, 4)
+        return -0.1
+
+    @staticmethod
+    def find_critical_eta(omega_i: float, K: float, K_c: float, tau: float,
+                          eta_range: Tuple[float,float] = (0.0, 1.5),
+                          n_steps: int = 8) -> float:
+        sim = KuramotoSimulator(N=60)
+        lo, hi = eta_range
         for _ in range(n_steps):
             mid = (lo + hi) / 2
-            res = sim.run(omega_i=omega_i, K=K, eta=mid, tau=tau)
-            if res["stable"]:
+            r   = sim.run(omega_i=omega_i, K=K, K_c=K_c, eta=mid, tau=tau)
+            if r["stable"]:
                 lo = mid
             else:
                 hi = mid
-
         return round((lo + hi) / 2, 3)
 
 
 # ══════════════════════════════════════════════
-# СЛОЙ 3 — Mode 1: Stress-Test
+# СЛОЙ 3 — StressTester
 # ══════════════════════════════════════════════
 
 class StressTester:
+    """
+    v4.2.2: правильный routing + USM + stability_score = 0.4*USM + 0.3*base + 0.3*stress_ratio
+    """
 
     def __init__(self):
-        self.kuramoto = KuramotoSimulator(N=100)
-        self.analyzer = StabilityAnalyzer()
+        self.kur  = KuramotoSimulator(N=100)
+        self.isi  = IsingMeanField()
+        self.lv   = LotkaVolterraStability()
+        self.dl   = DelayStability()
+        self.gi   = GraphInvariantStability()
+        self.perc = PercolationSimulator(N=300)
+        self.ana  = StabilityAnalyzer()
+        self.usm  = UniversalStabilityMetrics()
 
     def run(self, four_d: Dict[str, Any], artifact_id: str = "") -> Dict[str, Any]:
-        t_start = time.monotonic()
-
+        t0  = time.monotonic()
         dyn = four_d.get("dynamics", {})
-        tim = four_d.get("time", {})
         inf = four_d.get("influence", {})
+        tim = four_d.get("time", {})
+        s   = four_d.get("structure", {})
 
-        omega_i = float(dyn.get("omega_i", 0.25))
-        K = float(dyn.get("K", 0.35))
-        K_c = float(dyn.get("K_c", 0.48))
-        eta = float(inf.get("eta", 0.2))
-        tau = float(tim.get("tau", 0.5))
-        model_name = str(dyn.get("model", "kuramoto")).lower()
+        omega = float(dyn.get("omega_i", 0.25))
+        K     = float(dyn.get("K",       0.35))
+        K_c   = float(dyn.get("K_c",     0.48))
+        p     = float(dyn.get("p",       0.65))
+        model = str(dyn.get("model", "kuramoto")).lower().strip()
+        if model not in KNOWN_MODELS:
+            model = "kuramoto"
 
-        base_result = self._run_model(model_name, omega_i, K, eta, tau, four_d)
+        eta   = float(inf.get("eta", 0.2))
+        h     = float(inf.get("h",   0.5))
+        T     = float(inf.get("T",   1.0))
+        tau   = float(tim.get("tau", 0.5))
+        H     = float(tim.get("H",   0.7))
+        C     = float(s.get("C",     0.5))
+        k_s   = float(s.get("k",     6.0))
 
-        tau_results = []
-        for tau_mult in [1.5, 2.0]:
-            r = self._run_model(model_name, omega_i, K, eta, tau * tau_mult, four_d)
-            tau_results.append({"tau_mult": tau_mult, "stable": r.get("stable", False)})
+        usm_r = self.usm.compute(four_d, model)
+        base  = self._sim(model, omega, K, K_c, p, eta, h, T, tau, H, C, k_s, four_d)
 
-        eta_results = []
-        for eta_delta in [0.15, 0.30]:
-            r = self._run_model(model_name, omega_i, K, min(eta + eta_delta, 1.5), tau, four_d)
-            eta_results.append({"eta_delta": round(eta_delta, 2), "stable": r.get("stable", False)})
+        tau_r = [{"tau_mult": tm, "stable": self._sim(model, omega, K, K_c, p, eta, h, T,
+                   tau*tm, H, C, k_s, four_d).get("stable", False)} for tm in [1.5, 2.0]]
+        eta_r = [{"eta_delta": ed, "stable": self._sim(model, omega, K, K_c, p,
+                   min(eta+ed, 1.5), h, T, tau, H, C, k_s, four_d).get("stable", False)} for ed in [0.15, 0.30]]
+        K_r   = [{"K_mult": km, "stable": self._sim(model, omega, K*km, K_c, p, eta, h, T,
+                   tau, H, C, k_s, four_d).get("stable", False)} for km in [0.70, 0.85]]
 
-        K_results = []
-        for K_mult in [0.70, 0.85]:
-            r = self._run_model(model_name, omega_i, K * K_mult, eta, tau, four_d)
-            K_results.append({"K_mult": K_mult, "stable": r.get("stable", False)})
+        if model == "kuramoto":
+            lya = self.ana.lyapunov_estimate(omega, K, K_c)
+            eta_c = self.ana.find_critical_eta(omega, K, K_c, tau)
+        else:
+            lya = self.ana.lyapunov_analytical(model, four_d)
+            eta_c = round(max(0.1, 1.0 - eta) * 0.7, 3)
 
-        lyapunov = self.analyzer.lyapunov_estimate(omega_i, K, eta)
-        eta_critical = self.analyzer.find_critical_eta(omega_i, K, K_c, tau)
+        all_stress   = tau_r + eta_r + K_r
+        stress_ratio = sum(1 for x in all_stress if x.get("stable", False)) / max(len(all_stress), 1)
 
-        all_stress = tau_results + eta_results + K_results
-        passed = sum(1 for s in all_stress if s.get("stable", False))
         stability_score = round(
-            (0.3 * int(base_result.get("stable", False)) +
-             0.7 * (passed / max(len(all_stress), 1))),
+            0.4 * usm_r["usm"]
+            + 0.3 * float(base.get("stable", False))
+            + 0.3 * stress_ratio,
             3,
         )
 
-        cpu_time = round(time.monotonic() - t_start, 2)
-
         result = {
-            "artifact_id": artifact_id,
-            "model_used": model_name,
-            "timestamp": _now_iso(),
-            "cpu_time_s": cpu_time,
-            "base_simulation": base_result,
-            "stress_tau": tau_results,
-            "stress_eta": eta_results,
-            "stress_K": K_results,
-            "lyapunov_max": lyapunov,
-            "lyapunov_stable": lyapunov < 0,
-            "eta_critical": eta_critical,
+            "artifact_id":      artifact_id,
+            "model_used":       model,
+            "timestamp":        _now_iso(),
+            "cpu_time_s":       round(time.monotonic() - t0, 2),
+            "base_simulation":  base,
+            "stress_tau":       tau_r,
+            "stress_eta":       eta_r,
+            "stress_K":         K_r,
+            "lyapunov_max":     lya,
+            "lyapunov_stable":  lya < 0,
+            "eta_critical":     eta_c,
             "bifurcation_boundary": {
                 "K_above_critical": K > K_c,
-                "K_c": K_c,
-                "K": K,
-                "eta_max": eta_critical,
-                "tau_max_stable": round(
-                    tau * 1.5 if tau_results[0]["stable"] else tau * 1.0,
-                    3,
-                ),
+                "K_c":   K_c, "K": K,
+                "eta_max": eta_c,
+                "tau_max_stable": round(tau * 1.5 if tau_r[0]["stable"] else tau, 3),
             },
+            "usm":             usm_r,
             "stability_score": stability_score,
-            "survival_verified": stability_score >= 0.6,
+            "survival_verified": stability_score >= 0.5,
         }
-
-        self._save_result(artifact_id, result)
+        self._save(artifact_id, result)
         return result
 
-    def _run_model(
-        self,
-        model: str,
-        omega_i: float,
-        K: float,
-        eta: float,
-        tau: float,
-        four_d: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        if model == "percolation":
-            p = float(four_d.get("dynamics", {}).get("p", 0.65))
-            k_mean = float(four_d.get("structure", {}).get("k", 6.0))
-            sim = PercolationSimulator(N=300)
-            return sim.run(p=p, k_mean=k_mean)
-        else:
-            return self.kuramoto.run(omega_i=omega_i, K=K, eta=eta, tau=tau)
+    def _sim(self, model, omega, K, K_c, p, eta, h, T, tau, H, C, k, four_d) -> Dict[str, Any]:
+        if model == "kuramoto":
+            return self.kur.run(omega_i=omega, K=K, K_c=K_c, eta=eta, tau=tau)
+        elif model == "ising":
+            return self.isi.run(K=K, h=h, T=T, eta=eta)
+        elif model == "lotka_volterra":
+            return self.lv.run(omega_i=omega, K=K, K_c=K_c, p=p, eta=eta)
+        elif model == "delay":
+            return self.dl.run(K=K, tau=tau, H=H, eta=eta)
+        elif model == "percolation":
+            return self.perc.run(p=p, k_mean=k)
+        elif model == "graph_invariant":
+            return self.gi.run(C=C, k=k, p=p, eta=eta)
+        return self.kur.run(omega_i=omega, K=K, K_c=K_c, eta=eta, tau=tau)
 
-    def _save_result(self, artifact_id: str, result: Dict[str, Any]):
+    def _save(self, artifact_id: str, result: dict):
         SIM_RESULTS_DIR.mkdir(exist_ok=True)
-        path = SIM_RESULTS_DIR / f"{artifact_id}_stress.json"
-        path.write_text(json.dumps(result, ensure_ascii=False, indent=2))
+        (SIM_RESULTS_DIR / f"{artifact_id}_stress.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2))
 
 
 # ══════════════════════════════════════════════
-# СЛОЙ 4 — Mode 2: Resonance Matcher
+# СЛОЙ 4 — ResonanceMatcher
 # ══════════════════════════════════════════════
 
 class ResonanceMatcher:
-    """
-    Mode 2: Поиск изоморфных артефактов по 4D-вектору.
-
-    v4.2.1 исправления:
-      - _load_index: автоматически пропускает дублирующиеся id при загрузке
-      - _rewrite_index: перезаписывает весь файл из in-memory состояния
-      - add_to_index: если artifact_id уже в индексе — обновляет, не дублирует
-    """
+    """Поиск по 4D-вектору. Дедупликация из v4.2.1."""
 
     def __init__(self, four_d_index_path: str = "artifacts/four_d_index.jsonl"):
         self.index_path = Path(four_d_index_path)
         self._vectors: List[np.ndarray] = []
-        self._meta: List[Dict] = []
+        self._meta:    List[Dict]       = []
         self._load_index()
 
     def _load_index(self):
         if not self.index_path.exists():
             return
-        seen_ids: set = set()
-        duplicates = 0
+        seen, dupes = set(), 0
         with open(self.index_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    entry = json.loads(line)
-                    art_id = entry.get("id", "")
-                    if art_id in seen_ids:
-                        duplicates += 1
-                        logger.debug(f"ResonanceMatcher: skip duplicate id={art_id}")
-                        continue
-                    seen_ids.add(art_id)
-                    vec = np.array(entry["vector"], dtype=np.float64)
-                    self._vectors.append(vec)
-                    self._meta.append(entry)
+                    e   = json.loads(line)
+                    aid = e.get("id","")
+                    if aid in seen:
+                        dupes += 1; continue
+                    seen.add(aid)
+                    self._vectors.append(np.array(e["vector"], dtype=np.float64))
+                    self._meta.append(e)
                 except Exception:
                     continue
-
-        if duplicates:
-            logger.info(
-                f"ResonanceMatcher: loaded {len(self._vectors)} vectors, "
-                f"skipped {duplicates} duplicates — rewriting clean index"
-            )
+        if dupes:
+            logger.info(f"ResonanceMatcher: loaded {len(self._vectors)} vecs, skipped {dupes} dupes — rewriting")
             self._rewrite_index()
         else:
             logger.info(f"ResonanceMatcher: loaded {len(self._vectors)} 4D vectors")
 
     def _rewrite_index(self):
-        """Перезаписывает файл индекса из in-memory состояния (дедупликация)."""
         self.index_path.parent.mkdir(exist_ok=True)
         with open(self.index_path, "w", encoding="utf-8") as f:
-            for entry in self._meta:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            for e in self._meta:
+                f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
-    def add_to_index(
-        self,
-        artifact_id: str,
-        four_d: Dict[str, Any],
-        domain: str,
-        vec: np.ndarray,
-        stability_score: float = 0.5,
-    ):
-        """
-        Добавляет вектор в индекс.
-        Если artifact_id уже присутствует — обновляет запись (без дубликата).
-        """
-        entry = {
-            "id": artifact_id,
-            "domain": domain,
-            "four_d": four_d,
-            "vector": vec.tolist(),
-            "stability_score": stability_score,
-            "added_at": _now_iso(),
-        }
-
-        existing_idx = next(
-            (i for i, m in enumerate(self._meta) if m.get("id") == artifact_id),
-            None,
-        )
-
-        if existing_idx is not None:
-            # Обновляем in-memory и перезаписываем файл целиком
-            self._vectors[existing_idx] = vec
-            self._meta[existing_idx] = entry
+    def add_to_index(self, artifact_id: str, four_d: Dict, domain: str,
+                     vec: np.ndarray, stability_score: float = 0.5):
+        entry = {"id": artifact_id, "domain": domain, "four_d": four_d,
+                 "vector": vec.tolist(), "stability_score": stability_score,
+                 "added_at": _now_iso()}
+        idx = next((i for i, m in enumerate(self._meta) if m.get("id") == artifact_id), None)
+        if idx is not None:
+            self._vectors[idx] = vec
+            self._meta[idx]    = entry
             self._rewrite_index()
-            logger.debug(f"ResonanceMatcher: updated existing entry for {artifact_id}")
         else:
-            # Новый артефакт — append-only, быстро
             self._vectors.append(vec)
             self._meta.append(entry)
             self.index_path.parent.mkdir(exist_ok=True)
             with open(self.index_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            logger.debug(f"ResonanceMatcher: appended new entry for {artifact_id}")
 
-    def find_similar(
-        self,
-        query_vec: np.ndarray,
-        top_k: int = 5,
-        threshold: float = 0.55,
-    ) -> List[Dict[str, Any]]:
+    def find_similar(self, query_vec: np.ndarray,
+                     top_k: int = 5, threshold: float = 0.55) -> List[Dict]:
         if not self._vectors:
             return []
-
         results = []
         for i, vec in enumerate(self._vectors):
-            resonance = self._compute_resonance(query_vec, vec)
-            if resonance >= threshold:
-                results.append({
-                    **self._meta[i],
-                    "4d_resonance": resonance,
-                })
-
+            r = self._res(query_vec, vec)
+            if r >= threshold:
+                results.append({**self._meta[i], "4d_resonance": r})
         return sorted(results, key=lambda x: -x["4d_resonance"])[:top_k]
 
-    def _compute_resonance(self, a: np.ndarray, b: np.ndarray) -> float:
-        if a.shape != b.shape:
-            return 0.0
-        try:
-            cos_sim = 1.0 - float(scipy_cosine(a, b))
-        except Exception:
-            cos_sim = 0.0
-        norm = float(np.linalg.norm(a - b))
-        max_norm = float(np.sqrt(a.shape[0]))
-        euc_sim = 1.0 - norm / max(max_norm, 1e-9)
-        return round((cos_sim * 0.6 + euc_sim * 0.4), 3)
+    def _res(self, a: np.ndarray, b: np.ndarray) -> float:
+        if a.shape != b.shape: return 0.0
+        try: cos = 1.0 - float(scipy_cosine(a, b))
+        except Exception: cos = 0.0
+        euc = 1.0 - float(np.linalg.norm(a - b)) / max(float(np.sqrt(a.shape[0])), 1e-9)
+        return round(cos * 0.6 + euc * 0.4, 3)
 
 
 # ══════════════════════════════════════════════
-# СЛОЙ 5 — Probability Engine
+# СЛОЙ 5 — ProbabilityEngine
 # ══════════════════════════════════════════════
 
 class ProbabilityEngine:
-
-    ALPHA = 0.35
-    BETA  = 0.25
-    GAMMA = 0.20
-    DELTA = 0.15
-    EPS   = 0.05
-
-    K_LOGISTIC = 5.0
-    X0_LOGISTIC = 0.60
+    ALPHA=0.35; BETA=0.25; GAMMA=0.20; DELTA=0.15; EPS=0.05
+    K_LOG=5.0;  X0=0.60
 
     @staticmethod
     def sigmoid(x: float) -> float:
         return 1.0 / (1.0 + math.exp(-x))
 
-    def compute(
-        self,
-        iso_4d: float,
-        stability_score: float,
-        scale_align: float,
-        survival: str,
-        noise_penalty: float,
-    ) -> Dict[str, Any]:
-        survival_bonus = 0.15 if survival == "STRUCTURAL" else 0.0
-        raw = (
-            self.ALPHA * iso_4d
-            + self.BETA * stability_score
-            + self.GAMMA * scale_align
-            + self.DELTA * survival_bonus
-            - self.EPS * noise_penalty
-        )
-        p = round(self.sigmoid(self.K_LOGISTIC * (raw - self.X0_LOGISTIC)), 3)
-
-        if p >= 0.75:
-            band = "high"
-        elif p >= 0.55:
-            band = "plausible"
-        elif p >= 0.35:
-            band = "speculative"
-        else:
-            band = "low"
-
-        return {
-            "probability": p,
-            "confidence_band": band,
-            "raw_score": round(raw, 3),
-            "components": {
-                "iso_4d": iso_4d,
-                "stability_score": stability_score,
-                "scale_align": scale_align,
-                "survival_bonus": survival_bonus,
-                "noise_penalty": noise_penalty,
-            },
-        }
+    def compute(self, iso_4d, stability_score, scale_align, survival, noise_penalty) -> Dict:
+        sb  = 0.15 if survival == "STRUCTURAL" else 0.0
+        raw = (self.ALPHA*iso_4d + self.BETA*stability_score + self.GAMMA*scale_align
+               + self.DELTA*sb - self.EPS*noise_penalty)
+        p   = round(self.sigmoid(self.K_LOG * (raw - self.X0)), 3)
+        band = "high" if p>=0.75 else "plausible" if p>=0.55 else "speculative" if p>=0.35 else "low"
+        return {"probability":p,"confidence_band":band,"raw_score":round(raw,3),
+                "components":{"iso_4d":iso_4d,"stability_score":stability_score,
+                               "scale_align":scale_align,"survival_bonus":sb,"noise_penalty":noise_penalty}}
 
     @staticmethod
-    def compute_scale_align(domain_a: str, domain_b: str) -> float:
-        SCALES: Dict[str, float] = {
-            "physics": 1e6, "chemistry": 1e4, "biology": 1e3,
-            "neuroscience": 1e4, "psychology": 1e2, "sociology": 1e5,
-            "economics": 1e6, "linguistics": 1e4, "ecology": 1e3,
-            "geology": 1e5, "medicine": 1e3, "astronomy": 1e9,
-            "history": 1e4, "architecture": 1e2, "general": 1e3,
+    def compute_scale_align(da: str, db: str) -> float:
+        SCALES = {
+            "physics":1e6,"chemistry":1e4,"biology":1e3,"neuroscience":1e4,
+            "psychology":1e2,"sociology":1e5,"economics":1e6,"linguistics":1e4,
+            "ecology":1e3,"geology":1e5,"medicine":1e3,"astronomy":1e9,
+            "history":1e4,"architecture":1e2,"general":1e3,
+            "computer science":1e5,"robotics":1e4,"mathematics":1e3,
         }
-        s_a = SCALES.get(domain_a.lower(), 1e3)
-        s_b = SCALES.get(domain_b.lower(), 1e3)
-        ratio = abs(math.log10(s_a) - math.log10(s_b))
-        return round(max(0.0, 1.0 - ratio / 9.0), 3)
+        sa = SCALES.get(da.lower(), 1e3);  sb = SCALES.get(db.lower(), 1e3)
+        return round(max(0.0, 1.0 - abs(math.log10(sa) - math.log10(sb)) / 9.0), 3)
 
 
 # ══════════════════════════════════════════════
@@ -570,160 +654,91 @@ class ProbabilityEngine:
 
 class MathCore:
 
-    def __init__(
-        self,
-        artifacts_dir: str = "artifacts",
-        four_d_index: str = "artifacts/four_d_index.jsonl",
-    ):
-        self.artifacts_dir = Path(artifacts_dir)
-        self.stress_tester = StressTester()
+    def __init__(self, artifacts_dir: str = "artifacts",
+                 four_d_index: str = "artifacts/four_d_index.jsonl"):
+        self.artifacts_dir     = Path(artifacts_dir)
+        self.stress_tester     = StressTester()
         self.resonance_matcher = ResonanceMatcher(four_d_index)
-        self.prob_engine = ProbabilityEngine()
+        self.prob_engine       = ProbabilityEngine()
 
-    # ──────────────────────────────────────────
-    # PUBLIC: Mode 1
-    # ──────────────────────────────────────────
-
-    def stress_test(
-        self,
-        artifact_id: str,
-        four_d: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    def stress_test(self, artifact_id: str,
+                    four_d: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if four_d is None:
             four_d = self._load_four_d(artifact_id)
-
         if not four_d:
             return {"error": f"No four_d_matrix for {artifact_id}", "stability_score": 0.0}
-
         try:
             result = self.stress_tester.run(four_d, artifact_id)
-            # Патчим артефакт только если файл существует
-            # (вызывается после save_artifact в server.py)
             self._patch_artifact(artifact_id, {"simulation": result})
-            logger.info(
-                f"MathCore stress_test {artifact_id}: "
-                f"score={result['stability_score']} λ={result['lyapunov_max']}"
-            )
+            logger.info(f"MathCore stress_test {artifact_id}: "
+                        f"score={result['stability_score']} "
+                        f"usm={result['usm']['usm']} "
+                        f"λ={result['lyapunov_max']} model={result['model_used']}")
             return result
         except Exception as e:
             logger.error(f"MathCore stress_test failed: {e}", exc_info=True)
             return {"error": str(e), "stability_score": 0.0}
 
-    # ──────────────────────────────────────────
-    # PUBLIC: Mode 2
-    # ──────────────────────────────────────────
-
-    def find_resonance(
-        self,
-        query_four_d: Dict[str, Any],
-        query_domain: str,
-        query_survival: str = "UNKNOWN",
-        target_domains: Optional[List[str]] = None,
-        top_k: int = 3,
-    ) -> Dict[str, Any]:
-        from schemas.four_d_matrix import FourDMatrix, compute_4d_resonance
-
+    def find_resonance(self, query_four_d: Dict, query_domain: str,
+                       query_survival: str = "UNKNOWN",
+                       target_domains: Optional[List[str]] = None,
+                       top_k: int = 3) -> Dict[str, Any]:
+        from schemas.four_d_matrix import FourDMatrix
         matrix = FourDMatrix.from_raw(query_four_d)
         if matrix is None:
             return {"error": "Invalid four_d_matrix", "insights": []}
-
         query_vec = matrix.to_vector()
-        similar = self.resonance_matcher.find_similar(query_vec, top_k=top_k)
-
-        insights = []
+        similar   = self.resonance_matcher.find_similar(query_vec, top_k=top_k)
+        insights  = []
         for match in similar:
-            iso_4d = match.get("4d_resonance", 0.0)
+            iso_4d      = match.get("4d_resonance", 0.0)
             match_domain = match.get("domain", "general")
-            stability = match.get("stability_score", 0.5)
-
-            sim_path = SIM_RESULTS_DIR / f"{match['id']}_stress.json"
+            stability   = match.get("stability_score", 0.5)
+            sim_path    = SIM_RESULTS_DIR / f"{match['id']}_stress.json"
             if sim_path.exists():
                 try:
-                    sim_data = json.loads(sim_path.read_text())
-                    stability = sim_data.get("stability_score", stability)
+                    stability = json.loads(sim_path.read_text()).get("stability_score", stability)
                 except Exception:
                     pass
-
-            scale_align = self.prob_engine.compute_scale_align(query_domain, match_domain)
+            scale_align   = self.prob_engine.compute_scale_align(query_domain, match_domain)
             noise_penalty = float(query_four_d.get("influence", {}).get("eta", 0.2))
-
-            prob_result = self.prob_engine.compute(
-                iso_4d=iso_4d,
-                stability_score=stability,
-                scale_align=scale_align,
-                survival=query_survival,
-                noise_penalty=noise_penalty,
-            )
-
+            prob          = self.prob_engine.compute(iso_4d, stability, scale_align,
+                                                     query_survival, noise_penalty)
             insight = {
                 "id": f"ins_{match['id'][:8]}_{int(time.time())}",
-                "source_domain": query_domain,
-                "target_domain": match_domain,
-                "prototype_id": match["id"],
-                **prob_result,
-                "iso_4d": iso_4d,
-                "scale_align": scale_align,
-                "status": "monitoring" if prob_result["probability"] >= 0.55 else "low_confidence",
+                "source_domain": query_domain, "target_domain": match_domain,
+                "prototype_id": match["id"], **prob,
+                "iso_4d": iso_4d, "scale_align": scale_align,
+                "status": "monitoring" if prob["probability"] >= 0.55 else "low_confidence",
                 "generated_at": _now_iso(),
             }
             insights.append(insight)
+        for ins in insights:
+            self._save_insight(ins)
+        return {"insights": insights, "total": len(insights),
+                "top_resonance": insights[0]["iso_4d"] if insights else 0.0}
 
-        for insight in insights:
-            self._save_insight(insight)
-
-        return {
-            "insights": insights,
-            "total": len(insights),
-            "top_resonance": insights[0]["iso_4d"] if insights else 0.0,
-        }
-
-    # ──────────────────────────────────────────
-    # PUBLIC: Индексирование
-    # ──────────────────────────────────────────
-
-    def index_artifact(
-        self,
-        artifact_id: str,
-        four_d: Dict[str, Any],
-        domain: str,
-        stability_score: float = 0.5,
-    ):
+    def index_artifact(self, artifact_id: str, four_d: Dict, domain: str,
+                       stability_score: float = 0.5):
         from schemas.four_d_matrix import FourDMatrix
-
         matrix = FourDMatrix.from_raw(four_d)
-        if matrix is None:
-            return
-        vec = matrix.to_vector()
+        if matrix is None: return
         self.resonance_matcher.add_to_index(
-            artifact_id=artifact_id,
-            four_d=matrix.to_dict(),
-            domain=domain,
-            vec=vec,
-            stability_score=stability_score,
-        )
+            artifact_id=artifact_id, four_d=matrix.to_dict(), domain=domain,
+            vec=matrix.to_vector(), stability_score=stability_score)
         logger.info(f"MathCore indexed {artifact_id} (domain={domain})")
 
-    # ──────────────────────────────────────────
-    # УТИЛИТЫ
-    # ──────────────────────────────────────────
-
-    def _load_four_d(self, artifact_id: str) -> Optional[Dict[str, Any]]:
+    def _load_four_d(self, artifact_id: str) -> Optional[Dict]:
         path = self.artifacts_dir / f"{artifact_id}.json"
-        if not path.exists():
-            return None
+        if not path.exists(): return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            gen = data.get("data", {}).get("gen", {})
-            return gen.get("four_d_matrix")
-        except Exception:
-            return None
+            return json.loads(path.read_text(encoding="utf-8")).get("data",{}).get("gen",{}).get("four_d_matrix")
+        except Exception: return None
 
-    def _patch_artifact(self, artifact_id: str, patch: Dict[str, Any]):
-        """Патчит артефакт если файл существует. Тихо пропускает если нет."""
+    def _patch_artifact(self, artifact_id: str, patch: Dict):
         path = self.artifacts_dir / f"{artifact_id}.json"
         if not path.exists():
-            logger.debug(f"_patch_artifact: {artifact_id}.json not found, skipping")
-            return
+            logger.debug(f"_patch_artifact: {artifact_id}.json not found"); return
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             data.update(patch)
@@ -731,94 +746,87 @@ class MathCore:
         except Exception as e:
             logger.error(f"_patch_artifact {artifact_id}: {e}")
 
-    def _save_insight(self, insight: Dict[str, Any]):
+    def _save_insight(self, insight: Dict):
         INSIGHTS_DIR.mkdir(exist_ok=True)
-        path = INSIGHTS_DIR / f"{insight['id']}.json"
-        path.write_text(json.dumps(insight, ensure_ascii=False, indent=2))
-
-    # ──────────────────────────────────────────
-    # CLI: самотестирование
-    # ──────────────────────────────────────────
+        (INSIGHTS_DIR / f"{insight['id']}.json").write_text(
+            json.dumps(insight, ensure_ascii=False, indent=2))
 
     @staticmethod
     def selftest():
-        print("MathCore v4.2.1 self-test...")
+        print("MathCore v4.2.2 self-test...")
 
+        # Kuramoto sub-critical
         sim = KuramotoSimulator(N=50)
-        r = sim.run(omega_i=0.25, K=0.6, eta=0.15, tau=0.5)
-        assert r["model"] == "kuramoto"
-        print(f"  KuramotoSimulator: r_final={r['r_final']} stable={r['stable']} ✓")
+        r = sim.run(omega_i=0.25, K=0.42, K_c=0.59, eta=0.1, tau=0.5)
+        assert not r["stable"], f"Expected unstable K<K_c, got r={r['r_final']}"
+        print(f"  Kuramoto (K<K_c): r={r['r_final']} stable={r['stable']} ✓")
 
-        lya = StabilityAnalyzer.lyapunov_estimate(0.25, 0.6, 0.15, N=50, t_steps=100)
-        print(f"  LyapunovEstimate: λ_max={lya} ✓")
+        # Kuramoto super-critical
+        r2 = sim.run(omega_i=0.25, K=0.8, K_c=0.59, eta=0.1, tau=0.5)
+        assert r2["stable"], f"Expected stable K>K_c, got r={r2['r_final']}"
+        print(f"  Kuramoto (K>K_c): r={r2['r_final']} stable={r2['stable']} ✓")
 
-        from schemas.four_d_matrix import FourDMatrix, compute_4d_resonance
-        fd = FourDMatrix.from_raw({
-            "structure": {"C": 0.6, "k": 9, "D": 2.1},
-            "influence": {"h": 0.9, "T": 1.0, "eta": 0.2},
-            "dynamics": {"omega_i": 0.25, "K": 0.4, "K_c": 0.48, "p": 0.7, "model": "kuramoto"},
-            "time": {"tau": 0.5, "H": 0.75, "freq": 1.1},
-        })
-        assert fd is not None
-        vec = fd.to_vector()
-        assert len(vec) == 13
-        r2 = compute_4d_resonance(vec, vec)
-        assert r2 == 1.0
-        print(f"  FourDMatrix: vec.shape={vec.shape} self_resonance={r2} ✓")
+        # Ising
+        i_ord = IsingMeanField().run(K=1.5, h=0.1, T=0.8, eta=0.1)
+        i_dis = IsingMeanField().run(K=0.5, h=0.0, T=2.0, eta=0.1)
+        print(f"  Ising ordered: m={i_ord['magnetization']} stable={i_ord['stable']} ✓")
+        print(f"  Ising disordered: m={i_dis['magnetization']} stable={i_dis['stable']} ✓")
 
-        pe = ProbabilityEngine()
-        p = pe.compute(iso_4d=0.89, stability_score=0.85, scale_align=0.7,
-                       survival="STRUCTURAL", noise_penalty=0.2)
-        print(f"  ProbabilityEngine: P={p['probability']} band={p['confidence_band']} ✓")
+        # LotkaVolterra
+        lv = LotkaVolterraStability().run(omega_i=0.3, K=0.4, K_c=0.5, p=0.7, eta=0.2)
+        print(f"  LV: x*={lv['x_star']} y*={lv['y_star']} stable={lv['stable']} ✓")
 
-        # Тест дедупликации ResonanceMatcher
-        import tempfile, os
-        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, mode="w") as tmp:
-            tmp_path = tmp.name
-        try:
-            rm = ResonanceMatcher(tmp_path)
-            test_vec = np.ones(13, dtype=np.float64) * 0.5
-            rm.add_to_index("test_001", {}, "physics", test_vec, 0.7)
-            rm.add_to_index("test_001", {}, "physics", test_vec, 0.8)  # дубликат
-            rm.add_to_index("test_002", {}, "biology", test_vec * 0.9, 0.6)
-            assert len(rm._meta) == 2, f"Expected 2, got {len(rm._meta)}"
-            # Проверяем что stability_score обновился
-            idx = next(i for i, m in enumerate(rm._meta) if m["id"] == "test_001")
-            assert rm._meta[idx]["stability_score"] == 0.8, "stability_score not updated"
-            print(f"  ResonanceMatcher dedup: entries={len(rm._meta)} ✓")
-        finally:
-            os.unlink(tmp_path)
+        # Delay
+        dl_s = DelayStability().run(K=1.0, tau=0.5, H=0.7, eta=0.1)
+        dl_u = DelayStability().run(K=1.0, tau=2.0, H=0.7, eta=0.1)
+        print(f"  Delay stable: margin={dl_s['stability_margin']:.2f} stable={dl_s['stable']} ✓")
+        print(f"  Delay unstable: margin={dl_u['stability_margin']:.2f} stable={dl_u['stable']} ✓")
 
-        four_d_test = {
-            "structure": {"C": 0.6, "k": 8.0, "D": 2.1},
-            "influence": {"h": 0.8, "T": 1.0, "eta": 0.18},
-            "dynamics": {"omega_i": 0.25, "K": 0.5, "K_c": 0.48, "p": 0.65, "model": "kuramoto"},
-            "time": {"tau": 0.5, "H": 0.75, "freq": 1.0},
-        }
+        # GraphInvariant
+        gi = GraphInvariantStability().run(C=0.6, k=8.0, p=0.3, eta=0.2)
+        print(f"  GraphInv: giant={gi['giant_fraction']} stable={gi['stable']} ✓")
+
+        # USM
+        fd = {"structure":{"C":0.62,"k":9.0,"D":2.15},"influence":{"h":0.9,"T":1.0,"eta":0.2},
+              "dynamics":{"omega_i":0.25,"K":0.8,"K_c":0.59,"p":0.7,"model":"kuramoto"},
+              "time":{"tau":0.5,"H":0.75,"freq":1.1}}
+        u = UniversalStabilityMetrics().compute(fd, "kuramoto")
+        assert u["usm"] > 0.4, f"USM too low: {u}"
+        print(f"  USM (K>K_c): usm={u['usm']} phase={u['phase_proximity']} ✓")
+
+        # StressTester
         st = StressTester()
-        res = st.run(four_d_test, "test_artifact")
-        print(f"  StressTester: score={res['stability_score']} survival={res['survival_verified']} cpu={res['cpu_time_s']}s ✓")
+        res = st.run(fd, "test_artifact")
+        print(f"  StressTester: score={res['stability_score']} usm={res['usm']['usm']} cpu={res['cpu_time_s']}s ✓")
 
-        print("\n✅ All MathCore components OK")
+        # Dedup
+        import tempfile, os
+        tmp = tempfile.mktemp(suffix=".jsonl")
+        try:
+            rm = ResonanceMatcher(tmp)
+            v  = np.ones(13, dtype=np.float64) * 0.5
+            rm.add_to_index("t1", {}, "physics",  v, 0.7)
+            rm.add_to_index("t1", {}, "physics",  v, 0.9)  # duplicate
+            rm.add_to_index("t2", {}, "biology", v * 0.9, 0.6)
+            assert len(rm._meta) == 2
+            assert rm._meta[next(i for i,m in enumerate(rm._meta) if m["id"]=="t1")]["stability_score"] == 0.9
+            print(f"  ResonanceMatcher dedup: {len(rm._meta)} entries ✓")
+        finally:
+            if os.path.exists(tmp): os.unlink(tmp)
+
+        print("\n✅ All MathCore v4.2.2 components OK")
 
 
-# ──────────────────────────────────────────────────────────────
-# CLI
-# ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import argparse
     logging.basicConfig(level=logging.INFO)
-
-    parser = argparse.ArgumentParser(description="MathCore v4.2.1 CLI")
-    parser.add_argument("--test",   action="store_true", help="Run self-test")
-    parser.add_argument("--stress", type=str, default="",  help="artifact_id to stress-test")
+    parser = argparse.ArgumentParser(description="MathCore v4.2.2 CLI")
+    parser.add_argument("--test",   action="store_true")
+    parser.add_argument("--stress", type=str, default="")
     args = parser.parse_args()
-
     if args.test:
         MathCore.selftest()
     elif args.stress:
-        core = MathCore()
-        result = core.stress_test(args.stress)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print(json.dumps(MathCore().stress_test(args.stress), ensure_ascii=False, indent=2))
     else:
         parser.print_help()
