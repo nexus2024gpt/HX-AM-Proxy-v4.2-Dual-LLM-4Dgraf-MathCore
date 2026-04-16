@@ -12,8 +12,10 @@ Does the system maintain coherence (order_parameter stays above threshold)?
 Set "stress_dynamics_stable": true/false
 Set "tau_robustness": estimated maximum tau before coherence loss (float, same scale as input tau)
 
-REQUIRED output format (exact field names):
+REQUIRED output format — output fields IN THIS EXACT ORDER, closing brace } is the LAST character:
 {
+  "verdict": "VALID|WEAK|FALSE",
+  "confidence": 0.82,
   "translation": {
     "target_domain": "English word",
     "translated_mechanism": "Russian — mechanism in new domain terms using 4D parameters",
@@ -25,22 +27,20 @@ REQUIRED output format (exact field names):
     "eta_critical": 0.38,
     "reasoning": "Russian — why dynamics survive or collapse"
   },
-  "verdict": "VALID|WEAK|FALSE",
-  "confidence": 0.82,
-  "issues": ["Russian string"],
+  "issues": ["Russian string if any, else empty array"],
   "operationalization": {
     "model": "Kuramoto|Percolation|FRAM|Coleman|Graph Invariant|Lotka-Volterra|Ising",
-    "parameters": {"param_name": "Russian description"},
-    "measurement": "Russian — how to compute from data",
-    "examples": ["Russian example 1", "Russian example 2"]
+    "measurement": "Russian — how to compute from data"
   },
   "refined_hypothesis": "Russian — improved version (include if VALID or WEAK)"
 }
 
 RULES:
-- verdict != FALSE → always include operationalization
+- verdict MUST be the first field — output it immediately after the opening brace
+- CRITICAL: your response MUST end with } — no text after the closing brace
 - stress_test is ALWAYS required, even if survival = TERMINOLOGICAL
 - Never set verdict=FALSE due to ambiguity alone; try cross-domain search first
 - "issues" must be a JSON array (even if empty: [])
-- Each string value ≤ 500 characters
+- Each string value ≤ 300 characters
 - Output ONLY minified valid JSON, no comments before or after
+- Do NOT include "parameters" or "examples" fields in operationalization to keep response short

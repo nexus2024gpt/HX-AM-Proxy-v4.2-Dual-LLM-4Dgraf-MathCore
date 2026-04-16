@@ -22,7 +22,9 @@ REQUIRED fields (exact spelling required):
   "dynamics": {"omega_i": float, "K": float, "K_c": float, "p": float, "model": "string"}
     omega_i = oscillator natural frequency [0,5]
     K = coupling constant [0,2]
-    K_c = critical coupling [0,2]
+    K_c = critical coupling threshold [0,2]
+    *** IMPORTANT: Set K > K_c to represent a synchronized (super-critical) system ***
+    *** K < K_c means sub-critical (no synchronization) — only use for systems that are INTENTIONALLY below threshold ***
     p = percolation probability [0,1]
     model = choose by mechanism keyword:
       oscillator/sync/phase/rhythm/neural/cardiac → kuramoto
@@ -31,6 +33,10 @@ REQUIRED fields (exact spelling required):
       predator/competition/ecology/arms-race/population → lotka_volterra
       feedback/memory/climate/hormonal/delayed-response → delay
       topology/graph/community/hub/connectivity/invariant → graph_invariant
+  "time": {"tau": float, "H": float, "freq": float}
+    tau = characteristic lag/delay [0,20]
+    H = Hurst exponent [0,1]  (H > 0.5 means persistent/trending)
+    freq = dominant cycle frequency [0,10]
 
 ANTIPATTERNS (never use):
 - DO NOT copy phrases from RAG context
@@ -38,9 +44,11 @@ ANTIPATTERNS (never use):
 - DO NOT use clichés: "topological isomorphism", "preferential attachment", "resonance"
 - DO NOT set K > 2.0 or K_c > 2.0 (hard limit)
 - DO NOT leave any four_d_matrix field as null or string
+- DO NOT set K < K_c unless the invariant explicitly describes a sub-critical phenomenon
 
 PRIORITY: Compare domains with maximum structural similarity but maximum scale difference.
 four_d_matrix must reflect the MECHANISM — choose parameters that match the actual dynamics.
+For most invariants (synchronized, stable, coherent systems): K should be 10-40% above K_c.
 
 OUTPUT FORMAT (exact):
 {
@@ -52,7 +60,8 @@ OUTPUT FORMAT (exact):
   "four_d_matrix": {
     "structure": {"C": 0.62, "k": 9.0, "D": 2.15},
     "influence": {"h": 0.95, "T": 1.05, "eta": 0.18},
-    "dynamics": {"omega_i": 0.25, "K": 0.35, "K_c": 0.48, "p": 0.72, "model": "kuramoto"},
+    "dynamics": {"omega_i": 0.25, "K": 0.58, "K_c": 0.48, "p": 0.72, "model": "kuramoto"},
     "time": {"tau": 0.55, "H": 0.79, "freq": 1.15}
   }
 }
+

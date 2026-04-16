@@ -478,6 +478,7 @@ def process_query(req: QueryRequest):
                     query_domain=domain,
                     query_survival=survival,
                     top_k=3,
+                    exclude_id=job_id,   # ← ДОБАВИТЬ ЭТУ СТРОКУ
                 )
                 result["resonance"] = resonance_result
                 logger.info(

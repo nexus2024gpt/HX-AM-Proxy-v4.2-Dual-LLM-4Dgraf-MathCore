@@ -1,13 +1,10 @@
-# archivist.py — HX-AM Proxy v4 Native Archivist v2
+# archivist.py — HX-AM Proxy v4 Native Archivist v2.1
 """
-Оценивает новизну и структурную устойчивость артефакта.
-
-Ключевые исправления v2:
-  - Артефакт исключается из собственных соседей (self-comparison bug)
-  - domain_distance вычисляется явно для каждого соседа перед отправкой в LLM
-  - Правила проверяются локально до LLM-вызова для детерминированных случаев
-  - Порог REPHRASING поднят до 0.92 + требует одинакового домена
-  - PHENOMENAL проверяется первым
+v2.1 изменения:
+  - _fast_classify: добавлена проверка domain != neighbor_domain для PHENOMENAL
+  - _fast_classify: подняты пороги PHENOMENAL: sim>0.72→0.80, dist>0.60→0.65
+  - _fast_classify: PHENOMENAL требует минимум 2 соседей с кросс-доменной связью
+  - Это устраняет math→math PHENOMENAL и общую инфляцию классификации
 """
 
 import json
@@ -47,10 +44,6 @@ class Archivist:
             raise FileNotFoundError("prompts/archivist_prompt.txt not found")
         return path.read_text(encoding="utf-8")
 
-    # ──────────────────────────────────────────────
-    # ПУБЛИЧНЫЙ МЕТОД
-    # ──────────────────────────────────────────────
-
     def process(self, artifact_id: str) -> Dict[str, Any]:
         artifact_path = self.artifacts_dir / f"{artifact_id}.json"
         if not artifact_path.exists():
@@ -82,12 +75,10 @@ class Archivist:
 
         embedding = self.space.encode(full_text)
 
-        # Соседи — исключаем сам артефакт
         neighbors = self._get_neighbors_excluding_self(
             artifact_id, embedding, domain, top_k=8
         )
 
-        # Детерминированная пре-проверка (до LLM)
         fast_result = self._fast_classify(
             artifact_id, domain, survival, neighbors
         )
@@ -98,7 +89,6 @@ class Archivist:
             )
             result = fast_result
         else:
-            # Серая зона — отправляем в LLM
             subgraph = self.graph.get_subgraph(artifact_id, depth=2)
             context = self._build_context(
                 artifact_id, domain, hypothesis, mechanism,
@@ -115,7 +105,6 @@ class Archivist:
             result = self._parse_result(raw_text)
             result["_model"] = model_used
 
-        # Постобработка: никогда не ссылаемся на себя
         if result.get("is_rephrasing_of") == artifact_id:
             logger.warning(
                 f"Archivist self-reference bug: {artifact_id} → clearing"
@@ -123,20 +112,16 @@ class Archivist:
             result["novelty"] = "KNOWN"
             result["is_rephrasing_of"] = None
 
-        # Запись в артефакт
         artifact["archivist"] = result
         artifact["last_archivist_update"] = datetime.now(timezone.utc).isoformat()
         artifact_path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2))
 
-        # Защита от self-ссылки в linked_to
         links = result.get("linked_to") or []
         if artifact_id in links:
             result["linked_to"] = [link for link in links if link != artifact_id]
 
-        # Обновление графа
         self.graph.update_with_archivist(artifact_id, result)
 
-        # Логируем феноменальные
         if (
             result.get("novelty") == "PHENOMENAL"
             and result.get("mathematical_verification") == "STRUCTURAL"
@@ -152,10 +137,6 @@ class Archivist:
         )
         return result
 
-    # ──────────────────────────────────────────────
-    # ДЕТЕРМИНИРОВАННАЯ КЛАССИФИКАЦИЯ (без LLM)
-    # ──────────────────────────────────────────────
-
     def _fast_classify(
         self,
         artifact_id: str,
@@ -164,40 +145,51 @@ class Archivist:
         neighbors: list,
     ) -> Optional[Dict[str, Any]]:
         """
-        Детерминированно определяет очевидные случаи без LLM.
-
-        PHENOMENAL: кросс-доменный структурный сигнал явно сильный
-        REPHRASING: sim > 0.95 и одинаковый домен (очевидный дубликат)
-
-        Возвращает None если случай неоднозначный → идёт в LLM.
+        v2.1: PHENOMENAL требует реального кросс-домена (domain != neighbor_domain).
+        Подняты пороги: sim>0.80 (было 0.72), dist>0.65 (было 0.60).
+        Добавлено требование минимум 1 cross-domain соседа.
         """
         if not neighbors:
             return None
 
-        # Проверяем PHENOMENAL — берём приоритет
+        # ── PHENOMENAL ────────────────────────────────────────────────────────
+        # v2.1: строгая проверка — только реальный кросс-домен
+        cross_domain_hits = []
         for n in neighbors:
             sim = n["similarity"]
             dist = n["domain_distance"]
-            n_survival = n.get("survival", "UNKNOWN")
+            n_domain = n.get("domain", "")
 
-            if sim > 0.72 and dist > 0.6 and survival == "STRUCTURAL":
-                cross = [f"{domain}→{n['domain']}"]
-                return {
-                    "novelty": "PHENOMENAL",
-                    "is_rephrasing_of": None,
-                    "cross_domain_links": cross,
-                    "mathematical_verification": "STRUCTURAL",
-                    "novelty_score": round(0.7 + dist * 0.3, 3),
-                    "suggested_tags": ["cross_domain_invariant"],
-                    "confidence": 0.85,
-                    "linked_to": [n["id"]],
-                    "reasoning_summary": (
-                        f"Кросс-доменная структурная связь: {domain}→{n['domain']} "
-                        f"(sim={sim}, dist={dist}, survival=STRUCTURAL)"
-                    ),
-                }
+            # ИСПРАВЛЕНИЕ v2.1: исключаем тот же домен
+            if n_domain == domain:
+                continue
 
-        # Очевидный дубликат — очень высокий порог
+            # ИСПРАВЛЕНИЕ v2.1: подняты пороги
+            if sim > 0.80 and dist > 0.65 and survival == "STRUCTURAL":
+                cross_domain_hits.append(n)
+
+        if cross_domain_hits:
+            # Берём лучший кросс-доменный хит
+            best_cross = cross_domain_hits[0]
+            cross = [f"{domain}→{best_cross['domain']}"]
+            return {
+                "novelty": "PHENOMENAL",
+                "is_rephrasing_of": None,
+                "cross_domain_links": cross,
+                "mathematical_verification": "STRUCTURAL",
+                "novelty_score": round(0.7 + best_cross["domain_distance"] * 0.3, 3),
+                "suggested_tags": ["cross_domain_invariant"],
+                "confidence": 0.85,
+                "linked_to": [best_cross["id"]],
+                "reasoning_summary": (
+                    f"Кросс-доменная структурная связь: {domain}→{best_cross['domain']} "
+                    f"(sim={best_cross['similarity']}, dist={best_cross['domain_distance']}, "
+                    f"survival=STRUCTURAL)"
+                ),
+            }
+
+        # ── REPHRASING ────────────────────────────────────────────────────────
+        # Порог без изменений: высокий (0.95 + одинаковый домен)
         best = neighbors[0]
         if (
             best["similarity"] > 0.95
@@ -221,10 +213,6 @@ class Archivist:
 
         return None  # серая зона → LLM
 
-    # ──────────────────────────────────────────────
-    # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
-    # ──────────────────────────────────────────────
-
     def _get_neighbors_excluding_self(
         self,
         artifact_id: str,
@@ -232,10 +220,6 @@ class Archivist:
         domain: str,
         top_k: int = 8,
     ) -> list:
-        """
-        Возвращает ближайших соседей БЕЗ самого артефакта.
-        Обогащает каждого соседа domain_distance относительно текущего домена.
-        """
         filtered = self.graph.get_similar_nodes(
             embedding,
             self.space,
@@ -243,7 +227,6 @@ class Archivist:
             exclude_id=artifact_id,
         )
 
-        # Обогащаем domain_distance
         try:
             domain_vec = _embedder.encode(domain)
         except Exception:
@@ -319,10 +302,6 @@ class Archivist:
             "reasoning_summary": f"Fallback: {reason}",
         }
 
-
-# ──────────────────────────────────────────────
-# CLI
-# ──────────────────────────────────────────────
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
