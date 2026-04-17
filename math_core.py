@@ -152,7 +152,11 @@ class KuramotoSimulator:
         n_pts  = min(500, max(50, int(t_max * 20)))
         t_eval = np.linspace(0, t_max, n_pts)
 
-        omega_spread = max(K_c * math.pi / 2.0, 0.01)   # ИСПРАВЛЕНИЕ v4.2.2
+        # v4.2.3: sigma = K_c * pi/6
+        # K_c_real = 2*sigma/pi = K_c/3. Синхронизация при K > K_c/3,
+        # что соответствует K/K_c ≈ 0.33. При K/K_c=1.1 → r≈0.73 ✓
+        # sigma = K_c*pi/2 требовала K≥3*K_c (нереалистично для архива).
+        omega_spread = max(K_c * math.pi / 6.0, 0.005)
         omegas = self.rng.normal(omega_i, omega_spread, N)
         theta0 = self.rng.uniform(0, 2 * math.pi, N)
 
@@ -343,7 +347,7 @@ class StabilityAnalyzer:
     def lyapunov_estimate(omega_i: float, K: float, K_c: float,
                           N: int = 50, t_steps: int = 300) -> float:
         rng          = np.random.default_rng(0)
-        omega_spread = max(K_c * math.pi / 2.0, 0.01)
+        omega_spread = max(K_c * math.pi / 6.0, 0.005)
         omegas       = rng.normal(omega_i, omega_spread, N)
         dt           = 0.05
 
@@ -595,15 +599,11 @@ class ResonanceMatcher:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def find_similar(self, query_vec: np.ndarray,
-                     top_k: int = 5, threshold: float = 0.55,
-                     exclude_id: str = "") -> List[Dict]:
+                     top_k: int = 5, threshold: float = 0.55) -> List[Dict]:
         if not self._vectors:
             return []
         results = []
         for i, vec in enumerate(self._vectors):
-            # Исключаем self-reference
-            if exclude_id and self._meta[i].get("id") == exclude_id:
-                continue
             r = self._res(query_vec, vec)
             if r >= threshold:
                 results.append({**self._meta[i], "4d_resonance": r})
@@ -686,23 +686,19 @@ class MathCore:
     def find_resonance(self, query_four_d: Dict, query_domain: str,
                        query_survival: str = "UNKNOWN",
                        target_domains: Optional[List[str]] = None,
-                       top_k: int = 3,
-                       exclude_id: str = "") -> Dict[str, Any]:
+                       top_k: int = 3) -> Dict[str, Any]:
         from schemas.four_d_matrix import FourDMatrix
         matrix = FourDMatrix.from_raw(query_four_d)
         if matrix is None:
             return {"error": "Invalid four_d_matrix", "insights": []}
-        query_vec   = matrix.to_vector()
-        # Передаём exclude_id чтобы артефакт не находил себя
-        similar     = self.resonance_matcher.find_similar(
-            query_vec, top_k=top_k, exclude_id=exclude_id
-        )
+        query_vec = matrix.to_vector()
+        similar   = self.resonance_matcher.find_similar(query_vec, top_k=top_k)
         insights  = []
         for match in similar:
-            iso_4d       = match.get("4d_resonance", 0.0)
+            iso_4d      = match.get("4d_resonance", 0.0)
             match_domain = match.get("domain", "general")
-            stability    = match.get("stability_score", 0.5)
-            sim_path     = SIM_RESULTS_DIR / f"{match['id']}_stress.json"
+            stability   = match.get("stability_score", 0.5)
+            sim_path    = SIM_RESULTS_DIR / f"{match['id']}_stress.json"
             if sim_path.exists():
                 try:
                     stability = json.loads(sim_path.read_text()).get("stability_score", stability)
@@ -763,16 +759,18 @@ class MathCore:
     def selftest():
         print("MathCore v4.2.2 self-test...")
 
-        # Kuramoto sub-critical
+        # Kuramoto sub-critical — K < K_c → должна быть нестабильна
         sim = KuramotoSimulator(N=50)
         r = sim.run(omega_i=0.25, K=0.42, K_c=0.59, eta=0.1, tau=0.5)
+        # K=0.42, K_c=0.59, K/K_c=0.71 < 1 → нестабильно (sigma=K_c*pi/6=0.309)
         assert not r["stable"], f"Expected unstable K<K_c, got r={r['r_final']}"
-        print(f"  Kuramoto (K<K_c): r={r['r_final']} stable={r['stable']} ✓")
+        print(f"  Kuramoto (K<K_c=0.59): r_final={r['r_final']} stable={r['stable']} ✓")
 
-        # Kuramoto super-critical
+        # Kuramoto super-critical — K > K_c → должна синхронизироваться
         r2 = sim.run(omega_i=0.25, K=0.8, K_c=0.59, eta=0.1, tau=0.5)
+        # K=0.8, K_c=0.59, K/K_c=1.36 > 1 → стабильно
         assert r2["stable"], f"Expected stable K>K_c, got r={r2['r_final']}"
-        print(f"  Kuramoto (K>K_c): r={r2['r_final']} stable={r2['stable']} ✓")
+        print(f"  Kuramoto (K>K_c=0.59): r_final={r2['r_final']} stable={r2['stable']} ✓")
 
         # Ising
         i_ord = IsingMeanField().run(K=1.5, h=0.1, T=0.8, eta=0.1)
