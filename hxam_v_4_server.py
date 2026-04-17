@@ -959,6 +959,8 @@ def tracker_reset_stats(req: ResetRequest):
 
 @app.post("/math/stress/{artifact_id}")
 def math_stress_test(artifact_id: str):
+    # Убираем .json если UI передал имя файла вместо ID
+    artifact_id = artifact_id.replace(".json", "").replace(".hyx-portal", "")
     """Запускает MathCore стресс-тест для артефакта."""
     try:
         result = math_core.stress_test(artifact_id)
