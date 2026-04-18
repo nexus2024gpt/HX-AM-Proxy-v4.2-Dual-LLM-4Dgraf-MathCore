@@ -592,591 +592,109 @@ select.f-input option{background:#1e293b}
 
 <script>
 // ══════════════════════════════════════════════════════
-// GRAPH CONFIG (приём .bak + удвоение длины рёбер)
-// ══════════════════════════════════════════════════════
-const GRAPH_CONFIG = {
-  linkDistanceBase: 120,           // было ~60, теперь удвоено
-  excludeBak: true,
-  chargeStrength: -800,
-};
-
-// ══════════════════════════════════════════════════════
-// STATE
-// ══════════════════════════════════════════════════════
-let historyEntries = [];
-let artifactsData = [];
-let histSortDir = 'desc';
-let artSortMode = 'new';
-let currentModalArtId = null;
-let trackerKnownModels = {};
-let trackerProviders = [];
-let allArtifactsForClarify = [];
-
-function safeGet(obj, path, def = '—') {
-  return path.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : def), obj);
-}
-
-// ══════════════════════════════════════════════════════
-// NODE COLORS (единый источник истины для всех вкладок)
-// ══════════════════════════════════════════════════════
-const NODE_COLORS = {
-  stable_cluster:         '#4ade80',
-  'hyx-artifact':         '#4ade80',
-  'hyx-portal':           '#6366f1',
-  weak_pattern:           '#f59e0b',
-  mixed_patterns:         '#f59e0b',
-  noise:                  '#ef4444',
-  isolated:               '#ef4444',
-  sigma_primitive_candidate: '#94a3b8',   // ← серый, отличается от stable_cluster
-  terminological:         '#f97316',
-  unknown:                '#475569',
-};
-
-function typeColor(t) { return NODE_COLORS[t] || '#475569'; }
-
-function getNodeColor(node) {
-  if (node.is_bridge) return NODE_COLORS['hyx-portal'];
-  const s = node.stability || node.artifact_type || '';
-  // sigma_primitive_candidate по stability хранится как stable_cluster с phase_signal
-  // но artifact_type = sigma_primitive_candidate
-  return NODE_COLORS[node.artifact_type] || NODE_COLORS[s] || NODE_COLORS.unknown;
-}
-
-// Цвет ребра по весу: синий(0) → жёлтый(0.5) → красный(1)
-function weightToColor(w, maxW) {
-  if (!maxW || maxW === 0) return '#3b82f6';
-  const t = Math.min(w / maxW, 1.0);
-  if (t < 0.5) return lerpColor('#3b82f6', '#f59e0b', t * 2);
-  return lerpColor('#f59e0b', '#ef4444', (t - 0.5) * 2);
-}
-
-// ══════════════════════════════════════════════════════
-// TABS
-// ══════════════════════════════════════════════════════
-function switchTab(name, btn) {
-  document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
-  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.getElementById(name + '-tab').classList.add('active');
-  if (name === 'history') loadHistory();
-  if (name === 'artifacts') loadArtifacts();
-  if (name === 'quarantine') loadQuarantine();
-  if (name === 'graph') loadGraph();
-  if (name === 'trash') loadTrash();
-  if (name === 'math') { loadMathStats(); loadInsights(); }
-}
-
-// ══════════════════════════════════════════════════════
-// RAG CONTEXT
-// ══════════════════════════════════════════════════════
-let ragTimer = null;
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('queryText').addEventListener('input', () => {
-    clearTimeout(ragTimer);
-    ragTimer = setTimeout(fetchRag, 600);
-  });
-});
-
-async function fetchRag() {
-  const text = document.getElementById('queryText').value.trim();
-  const block = document.getElementById('rag-block');
-  const items = document.getElementById('rag-items');
-  if (text.length < 10) { block.classList.remove('visible'); return; }
-  try {
-    const res = await fetch('/rag/context?text=' + encodeURIComponent(text) + '&top_k=3');
-    const data = await res.json();
-    if (!data.similar || !data.similar.length) { block.classList.remove('visible'); return; }
-    const dropped = data.dropped || 0;
-    items.innerHTML = data.similar.map(s => `
-      <div class="rag-item">
-        <span class="rag-domain">${s.domain}</span>
-        <span class="rag-sim">sim: ${s.similarity}</span>
-        <div class="rag-text">${escHtml(s.invariant)}</div>
-      </div>
-    `).join('') + (dropped > 0 ? `<div style="font-size:.68rem;color:#475569;margin-top:.3rem">⚠️ ${dropped} отфильтровано</div>` : '');
-    block.classList.add('visible');
-  } catch(e) { block.classList.remove('visible'); }
-}
-
-// ══════════════════════════════════════════════════════
-// MODEL BADGE
-// ══════════════════════════════════════════════════════
-function modelBadge(model) {
-  if (!model || model === 'none') return '';
-  const isHF = model.startsWith('huggingface/');
-  const isGroq = model.startsWith('groq/');
-  const isGemini = model.startsWith('gemini/');
-  const colors = { groq:'#4ade80', gemini:'#60a5fa', huggingface:'#a78bfa' };
-  const key = isGroq ? 'groq' : isGemini ? 'gemini' : 'huggingface';
-  const c = colors[key] || '#94a3b8';
-  const label = model.split('/').pop().substring(0, 24);
-  const tag = isHF ? '⚠️ fallback · ' : '';
-  return `<span style="font-size:.68rem;font-weight:normal;background:${c}22;color:${c};border:1px solid ${c}55;border-radius:4px;padding:.1rem .4rem;margin-left:.4rem">${tag}${label}</span>`;
-}
-
-function verPanel(ver) {
-  if (!ver) return '—';
-  const vcolor = ver.verdict==='VALID'?'#4ade80':ver.verdict==='WEAK'?'#fbbf24':'#ef4444';
-  const scolor = ver.translation?.survival==='STRUCTURAL'?'#4ade80':'#f59e0b';
-  let out = `verdict: <span style="color:${vcolor};font-weight:bold">${ver.verdict||'—'}</span>  conf: ${ver.confidence??'—'}\n`;
-  if (ver.translation) {
-    out += `\nStep 0 → <b>${ver.translation.target_domain||'?'}</b>\n`;
-    out += `survival: <span style="color:${scolor}">${ver.translation.survival||'?'}</span>\n`;
-    if (ver.translation.translated_mechanism)
-      out += `${escHtml(ver.translation.translated_mechanism.substring(0,180))}...\n`;
-  }
-  if (ver.issues?.length) { out += `\nissues:\n`; ver.issues.forEach(i => { out += `  · ${escHtml(i.substring(0,120))}\n`; }); }
-  if (ver.operationalization) {
-    const op = ver.operationalization;
-    out += `\nmodel: <span style="color:#60a5fa">${op.model||'?'}</span>\n`;
-    if (op.measurement) out += `measure: ${escHtml(op.measurement.substring(0,120))}\n`;
-    if (op.examples?.length) out += `example: ${escHtml(op.examples[0].substring(0,100))}\n`;
-  }
-  if (ver.refined_hypothesis)
-    out += `\n<span style="color:#c084fc">refined: ${escHtml(ver.refined_hypothesis.substring(0,200))}</span>\n`;
-  return out;
-}
-
-function archivistPanel(a) {
-  const noveltyColor = { 'PHENOMENAL':'#22d3ee','NOVEL':'#4ade80','KNOWN':'#94a3b8' };
-  const novelty = a.novelty || '—';
-  const isRephrasing = novelty.startsWith('REPHRASING_OF');
-  const nc = isRephrasing ? '#f59e0b' : (noveltyColor[novelty] || '#94a3b8');
-  const mathColor = a.mathematical_verification==='STRUCTURAL'?'#4ade80':a.mathematical_verification==='CONTRADICTION'?'#ef4444':'#f59e0b';
-  const links = (a.cross_domain_links||[]).join(', ') || '—';
-  const tags = (a.suggested_tags||[]).map(t=>`<span style="background:#6366f122;color:#818cf8;border-radius:4px;padding:.1rem .3rem;font-size:.7rem;margin-right:.2rem">${t}</span>`).join('');
-  const score = typeof a.novelty_score==='number'?(a.novelty_score*100).toFixed(0)+'%':'—';
-  const conf = typeof a.confidence==='number'?(a.confidence*100).toFixed(0)+'%':'—';
-  return `<div class="panel" style="border-left-color:#22d3ee;min-width:280px;flex:1">
-    <h3>🗄️ Archivist</h3>
-    <pre style="font-size:.82rem">Новизна: <span style="color:${nc};font-weight:bold">${novelty}</span>
-Верификация: <span style="color:${mathColor}">${a.mathematical_verification||'—'}</span>
-Novelty score: ${score}   Confidence: ${conf}
-Кросс-домен: ${links}
-Reasoning: ${escHtml(a.reasoning_summary||'—')}</pre>
-    ${tags ? '<div style="padding:.5rem 1rem .75rem">' + tags + '</div>' : ''}
-  </div>`;
-}
-
-function renderPipelineResult(data) {
-  const container = document.getElementById('pipeline-result');
-  if (!container) return;
-
-  const gen = safeGet(data, 'generation', safeGet(data, 'gen', {}));
-  const ver = safeGet(data, 'verification', safeGet(data, 'ver', {}));
-  const structural = safeGet(data, 'structural', {});
-  const archivist = safeGet(data, 'archivist', {});
-  const sim = safeGet(data, 'simulation', {});
-  const resonance = safeGet(data, 'resonance', {});
-
-  let html = `<div style="margin-bottom:1rem"><strong>Job ID:</strong> ${data.job_id || data.id || '—'}</div>`;
-
-  html += `
-    <div class="panel">
-      <h3>Generation</h3>
-      <div class="detail-field"><div class="detail-key">Гипотеза</div><div class="detail-val">${escHtml(safeGet(gen, 'hypothesis'))}</div></div>
-      <div class="detail-field"><div class="detail-key">Механизм</div><div class="detail-val">${escHtml(safeGet(gen, 'mechanism'))}</div></div>
-      <div class="detail-field"><div class="detail-key">Домен</div><div class="detail-val">${escHtml(safeGet(gen, 'domain', data.domain))}</div></div>
-      <div class="detail-field"><div class="detail-key">b_sync</div><div class="detail-val">${safeGet(gen, 'b_sync')}</div></div>
-      <div class="detail-field"><div class="detail-key">Модель</div><div class="detail-val">${escHtml(data.gen_model || '—')}</div></div>
-    </div>`;
-
-  const verdictColor = ver.verdict === 'VALID' ? '#4ade80' : ver.verdict === 'WEAK' ? '#fbbf24' : '#ef4444';
-  html += `
-    <div class="panel">
-      <h3>Verification</h3>
-      <div class="detail-field"><div class="detail-key">Вердикт</div><div class="detail-val" style="color:${verdictColor}">${ver.verdict || '—'}</div></div>
-      <div class="detail-field"><div class="detail-key">Confidence</div><div class="detail-val">${ver.confidence || '—'}</div></div>
-      <div class="detail-field"><div class="detail-key">Issues</div><div class="detail-val">${ver.issues && ver.issues.length ? ver.issues.join(', ') : 'нет'}</div></div>
-      <div class="detail-field"><div class="detail-key">Модель</div><div class="detail-val">${escHtml(data.ver_model || '—')}</div></div>
-    </div>`;
-
-  if (structural.artifact_type) {
-    html += `
-      <div class="panel">
-        <h3>Structural Analysis</h3>
-        <div class="detail-field"><div class="detail-key">Тип артефакта</div><div class="detail-val">${safeGet(structural, 'artifact_type')}</div></div>
-        <div class="detail-field"><div class="detail-key">Стабильность</div><div class="detail-val">${safeGet(structural, 'stability')} ${structural.is_stable ? '✓' : '✗'}</div></div>
-        <div class="detail-field"><div class="detail-key">Specificity</div><div class="detail-val">${safeGet(structural, 'specificity')}</div></div>
-        <div class="detail-field"><div class="detail-key">Phase Signal</div><div class="detail-val">${safeGet(structural, 'phase_signal.signal')} (density: ${safeGet(structural, 'phase_signal.density')})</div></div>
-      </div>`;
-  }
-
-  const fourD = safeGet(data, 'four_d_matrix', safeGet(gen, 'four_d_matrix', null));
-  if (fourD && typeof fourD === 'object') {
-    html += `<div class="panel"><h3>4D Matrix</h3>`;
-    renderFourDMatrix(fourD, data.job_id);
-    html += `</div>`;
-  }
-
-  if (sim.stability_score !== undefined) {
-    const scColor = sim.stability_score >= 0.7 ? '#4ade80' : '#fbbf24';
-    html += `
-      <div class="panel">
-        <h3>MathCore Simulation</h3>
-        <div class="detail-field"><div class="detail-key">Stability Score</div><div class="detail-val" style="color:${scColor}">${(sim.stability_score*100).toFixed(0)}%</div></div>
-        <div class="detail-field"><div class="detail-key">λ_max</div><div class="detail-val">${sim.lyapunov_max || '—'}</div></div>
-        <div class="detail-field"><div class="detail-key">Survival</div><div class="detail-val">${sim.survival_verified ? '✓ Выжил' : '✗ Неустойчив'}</div></div>
-      </div>`;
-  }
-
-  if (resonance.insights && resonance.insights.length > 0) {
-    html += `<div class="panel"><h3>4D Resonance Insights</h3>`;
-    resonance.insights.forEach(ins => {
-      const pColor = ins.probability >= 0.7 ? '#4ade80' : ins.probability >= 0.5 ? '#fbbf24' : '#ef4444';
-      html += `
-        <div style="margin:8px 0;padding:10px;background:#1e293b;border-radius:8px">
-          <span style="color:${pColor}">${(ins.probability*100).toFixed(0)}%</span> 
-          ${escHtml(ins.source_domain)} → ${escHtml(ins.target_domain)}
-          <span style="float:right;font-size:0.75rem;color:#64748b">iso=${ins.iso_4d}</span>
-        </div>`;
-    });
-    html += `</div>`;
-  }
-
-  if (archivist && archivist.novelty) {
-    html += `
-      <div class="panel">
-        <h3>Archivist Evaluation</h3>
-        <div class="detail-field"><div class="detail-key">Novelty</div><div class="detail-val">${safeGet(archivist, 'novelty')} (${safeGet(archivist, 'novelty_score')})</div></div>
-        <div class="detail-field"><div class="detail-key">Cross-domain links</div><div class="detail-val">${archivist.cross_domain_links ? archivist.cross_domain_links.join(' | ') : '—'}</div></div>
-      </div>`;
-  }
-
-  container.innerHTML = html;
-}
-
-// ══════════════════════════════════════════════════════
-// SEND QUERY
-// ══════════════════════════════════════════════════════
-async function sendQuery() {
-  const text = document.getElementById('queryText').value.trim();
-  if (!text) return;
-  const btn = document.getElementById('submitBtn');
-  const loading = document.getElementById('loading');
-  const pipeline = document.getElementById('pipeline-result');
-  const refNotice = document.getElementById('ref-update-notice');
-  btn.disabled = true;
-  loading.classList.add('active');
-  if (pipeline) pipeline.innerHTML = '';
-  refNotice.style.display = 'none';
-
-  try {
-    const res = await fetch('/query', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text, domain: 'general', x_coordinate: 500})
-    });
-    const data = await res.json();
-
-    if (data.rejected) {
-      pipeline.innerHTML = `<div style="background:#1e293b;border-left:4px solid #ef4444;border-radius:12px;padding:1.25rem 1.5rem;color:#ef4444">
-        <div style="font-weight:bold;font-size:1.1rem;margin-bottom:.5rem">🚫 Запрос отклонён</div>
-        <div style="color:#94a3b8;font-size:.85rem;margin-bottom:.25rem">Stage: <span style="color:#fbbf24">${data.stage}</span></div>
-        <div style="color:#94a3b8;font-size:.85rem;margin-bottom:.25rem">Code: <span style="color:#f87171">${data.failure_code}</span></div>
-        <div style="color:#cbd5e1;font-size:.85rem;margin-top:.5rem">${escHtml(data.reason||'')}</div>
-      </div>`;
-      return;
-    }
-
-    // REF update notification
-    if (data.ref_updated) {
-      document.getElementById('ref-update-id').textContent = data.ref_updated;
-      refNotice.style.display = 'block';
-    }
-
-    _lastData = data;
-    renderPipelineResult(data);
-
-    const fourD = safeGet(data, 'four_d_matrix', safeGet(data, 'generation.four_d_matrix', safeGet(data, 'gen.four_d_matrix', null)));
-    if (fourD && typeof fourD === 'object') {
-      renderFourDMatrix(fourD, data.job_id);
-    } else {
-      renderFourDMatrix(null, data.job_id);
-    }
-
-    renderMathCurrentResult(data);
-    loadInsights();
-    loadMathStats();
-
-    refreshTrackerDot();
-  } catch(err) {
-    if (pipeline) pipeline.innerHTML = `<div style="color:#ef4444;padding:1rem">❌ ${err.message}</div>`;
-  } finally {
-    btn.disabled = false;
-    loading.classList.remove('active');
-  }
-}
-
-// ══════════════════════════════════════════════════════
-// HISTORY
-// ══════════════════════════════════════════════════════
-async function loadHistory() {
-  const container = document.getElementById('history-list');
-  container.innerHTML = 'Загрузка...';
-  try {
-    const res = await fetch('/history');
-    const data = await res.json();
-    historyEntries = data.history || [];
-    renderHistory();
-  } catch(err) { container.innerHTML = `<div style="color:#ef4444">${err.message}</div>`; }
-}
-
-function setSortHistory(dir) {
-  histSortDir = dir;
-  document.getElementById('hist-sort-desc').classList.toggle('active', dir==='desc');
-  document.getElementById('hist-sort-asc').classList.toggle('active', dir==='asc');
-  renderHistory();
-}
-
-function renderHistory() {
-  const container = document.getElementById('history-list');
-  if (!historyEntries.length) { container.innerHTML = '<p style="color:#94a3b8;text-align:center;">📭 Пусто</p>'; return; }
-  const sorted = histSortDir === 'asc' ? [...historyEntries] : [...historyEntries].reverse();
-  container.innerHTML = sorted.map((e, i) => {
-    const realIdx = histSortDir === 'asc' ? i : historyEntries.length - 1 - i;
-    const t = new Date(e.time * 1000).toLocaleString('ru-RU');
-    const q = (e.query||'').substring(0, 120);
-    const at = (e.structural||{}).artifact_type || '—';
-    const tc = typeColor(at);
-    const artId = e.artifact_id || e.job_id || e.filename?.replace('.json', '') || '—';
-    return `<div class="history-item" onclick="showHistoryDetail(${realIdx})">
-      <div class="history-timestamp">
-        <span>🕐 ${t}</span>
-        <span style="font-family:monospace;color:#60a5fa;font-size:.68rem">${artId !== '—' ? '📄 ' + artId : ''}</span>
-      </div>
-      <div style="font-size:.75rem;color:#64748b;margin-bottom:.2rem"><b style="color:#94a3b8">${e.domain||'general'}</b> · <span style="color:${tc}">${at}</span>${(e.rag_context||[]).length?' · 🧠 RAG:'+e.rag_context.length:''}</div>
-      <div class="history-query">${escHtml(q)}</div>
-      <div class="history-meta">${e.saved?'✅ сохранён':'❌ не сохранён'}</div>
-    </div>`;
-  }).join('');
-}
-
-function showHistoryDetail(i) { const e = historyEntries[i]; if(e) showModal(JSON.stringify(e, null, 2), null); }
-
-// ══════════════════════════════════════════════════════
-// ARTIFACTS
-// ══════════════════════════════════════════════════════
-async function loadArtifacts() {
-  const container = document.getElementById('artifacts-list');
-  container.innerHTML = 'Загрузка...';
-  try {
-    const res = await fetch('/artifacts');
-    const data = await res.json();
-    artifactsData = data.artifacts || [];
-    renderArtifacts();
-  } catch(err) { container.innerHTML = `<div style="color:#ef4444">${err.message}</div>`; }
-}
-
-function setSortArtifacts(mode) {
-  artSortMode = mode;
-  document.querySelectorAll('.sort-btn[id^="art-sort"]').forEach(b => b.classList.remove('active'));
-  document.getElementById('art-sort-' + (mode==='new'?'new':mode==='old'?'old':mode==='bsync'?'bsync':'domain')).classList.add('active');
-  renderArtifacts();
-}
-
-function renderArtifacts() {
-  const container = document.getElementById('artifacts-list');
-  if (!artifactsData.length) { container.innerHTML = '<p style="color:#94a3b8;text-align:center;">📦 Пусто</p>'; return; }
-  let sorted = [...artifactsData];
-  if (artSortMode === 'old') sorted.reverse();
-  else if (artSortMode === 'bsync') sorted.sort((a,b) => (b.b_sync||0) - (a.b_sync||0));
-  else if (artSortMode === 'domain') sorted.sort((a,b) => (a.domain||'').localeCompare(b.domain||''));
-  // 'new' — уже в правильном порядке
-
-  container.innerHTML = sorted.map(item => {
-    const at = item.artifact_type || item.stability || 'unknown';
-    const tc = typeColor(at);
-    const isPortal = item.is_portal;
-    const vcolor = item.verdict==='VALID'?'#4ade80':item.verdict==='WEAK'?'#fbbf24':item.verdict==='FALSE'?'#ef4444':'#475569';
-    const noveltyShort = item.novelty ? item.novelty.split(':')[0] : '';
-    const nc = {PHENOMENAL:'#22d3ee',NOVEL:'#4ade80',KNOWN:'#94a3b8'}[noveltyShort] || '#475569';
-    const histMark = item.history_count > 0 ? `<span style="color:#60a5fa;font-size:.65rem">🔄 rev.${item.history_count}</span>` : '';
-    return `<div class="artifact-item">
-      <div class="artifact-row">
-        <div class="artifact-dot" style="background:${tc}" title="${at}"></div>
-        <div class="artifact-info">
-          <div class="artifact-name">
-            ${isPortal ? '🌀' : '📄'} ${item.file}
-            <span class="artifact-id-badge">${item.id}</span>
-            ${histMark}
-          </div>
-          <div class="artifact-meta">
-            <b style="color:#94a3b8">${item.domain||'—'}</b>
-            · <span style="color:${vcolor}">${item.verdict||'—'}</span> conf=${item.confidence}
-            · b_sync=<b>${item.b_sync}</b>
-            ${noveltyShort?`· <span style="color:${nc}">${noveltyShort}</span>`:''}
-          </div>
-          <div class="artifact-hypothesis">${escHtml(item.hypothesis_short||'')}</div>
-        </div>
-        <div class="artifact-actions" onclick="event.stopPropagation()">
-          <button class="act-btn danger" onclick="confirmDelete('${item.id}',event)">🗑</button>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-  // Сделать всю строку кликабельной
-  container.querySelectorAll('.artifact-item').forEach(item => {
-    item.style.cursor = 'pointer';
-    item.addEventListener('click', (e) => {
-      if (!e.target.closest('.artifact-actions')) {
-        const artId = item.querySelector('.artifact-id-badge')?.textContent || '';
-        if (artId) viewArtifact(artId + '.json', artId);
-      }
-    });
-  });
-}
-
-async function confirmDelete(artId, evt) {
-  evt.stopPropagation();
-  if (!confirm(`Переместить артефакт ${artId} в корзину?`)) return;
-  try {
-    const res = await fetch(`/artifact/${artId}`, {method:'DELETE'});
-    const data = await res.json();
-    if (data.ok) { loadArtifacts(); loadGraph(); }
-  } catch(e) { alert('Ошибка: '+e.message); }
-}
-
-async function deleteCurrentArtifact() {
-  if (!currentModalArtId) return;
-  if (!confirm(`Переместить артефакт ${currentModalArtId} в корзину?`)) return;
-  try {
-    const res = await fetch(`/artifact/${currentModalArtId}`, {method:'DELETE'});
-    const data = await res.json();
-    if (data.ok) { closeModal(); loadArtifacts(); loadGraph(); }
-  } catch(e) { alert('Ошибка: '+e.message); }
-}
-
-async function viewArtifact(filename, artId) {
-  showModal('Загрузка...', artId || null);
-  try {
-    const res = await fetch(`/artifact/${encodeURIComponent(filename)}`);
-    if (!res.ok) throw new Error('Не найден');
-    const data = await res.json();
-    document.getElementById('artifactContent').textContent = JSON.stringify(data, null, 2);
-    if (artId) document.getElementById('modal-art-id').textContent = artId;
-  } catch(err) { document.getElementById('artifactContent').textContent = `Ошибка: ${err.message}`; }
-}
-
-function showModal(text, artId) {
-  currentModalArtId = artId || null;
-  document.getElementById('artifactContent').textContent = text;
-  document.getElementById('modal-art-id').textContent = artId || '';
-  document.getElementById('modal-delete-btn').style.display = artId ? 'inline-block' : 'none';
-  document.getElementById('artifactModal').style.display = 'block';
-}
-function closeModal() { document.getElementById('artifactModal').style.display = 'none'; currentModalArtId = null; }
-window.onclick = e => { if (e.target === document.getElementById('artifactModal')) closeModal(); if (e.target === document.getElementById('trackerModal')) closeTracker(); };
-
-// ══════════════════════════════════════════════════════
-// 3D GRAPH
+// 3D GRAPH (исправленная и безопасная версия)
 // ══════════════════════════════════════════════════════
 let graph3d = null;
 
-function getNodeSize(node) {
-  // Явная зависимость размера от b_sync: диапазон 2–18
-  const b = parseFloat(node.b_sync) || 0.1;
-  return 2 + Math.pow(b, 0.7) * 16;
-}
-
 async function loadGraph() {
+  const container = document.getElementById('graph-container');
   try {
-    const [phaseRes, dataRes] = await Promise.all([fetch('/phase'), fetch('/graph/data')]);
+    const [phaseRes, dataRes] = await Promise.all([
+      fetch('/phase'),
+      fetch('/graph/data')
+    ]);
+    
     const phase = await phaseRes.json();
     let data = await dataRes.json();
-    
-    // Запрет .bak файлов
+
+    // Запрет .bak
     if (GRAPH_CONFIG.excludeBak) {
-      data.nodes = data.nodes.filter(n => !n.id.endsWith('.bak'));
+      data.nodes = data.nodes.filter(n => !n.id?.endsWith('.bak'));
       data.links = data.links.filter(l => 
-        !l.source.endsWith('.bak') && !l.target.endsWith('.bak')
+        !l.source?.endsWith('.bak') && !l.target?.endsWith('.bak')
       );
     }
 
+    // Безопасный вывод статистики
+    document.getElementById('stat-nodes').textContent = data.nodes?.length ?? 0;
+    document.getElementById('stat-edges').textContent = data.links?.length ?? 0;
+    document.getElementById('stat-clusters').textContent = '—';
+    document.getElementById('stat-bridges').textContent = '—';
+
+    // Фаза
     const badge = document.getElementById('graph-phase-badge');
     if (phase.signal === 'sigma_primitive_candidate') {
       badge.textContent = `⚡ SIGMA CANDIDATE · density=${phase.density} · domains=${phase.unique_domains}`;
       badge.className = 'sigma';
-    } else if (phase.signal === 'template_loop') {
-      badge.textContent = `⚠️ TEMPLATE LOOP · density=${phase.density} · domains=${phase.unique_domains}`;
-      badge.style.color = '#f59e0b'; badge.className = '';
     } else {
-      badge.textContent = `Phase: ${phase.signal} · density=${phase.density}`;
-      badge.style.color = '#64748b'; badge.className = '';
+      badge.textContent = `Phase: ${phase.signal || '—'}`;
+      badge.className = '';
     }
 
-    document.getElementById('stat-nodes').textContent = data.meta.total_nodes;
-    document.getElementById('stat-edges').textContent = data.meta.total_edges;
-    document.getElementById('stat-clusters').textContent = data.meta.cluster_count;
-    document.getElementById('stat-bridges').textContent = data.meta.bridge_count;
+    if (!data.nodes?.length) {
+      container.innerHTML = `<div style="color:#94a3b8;padding:3rem;text-align:center">Граф пуст (0 узлов)</div>`;
+      return;
+    }
 
-    if (!data.nodes.length) return;
     renderGraph3D(data);
-  } catch(err) { console.error('Graph load error:', err); }
+  } catch (err) {
+    console.error('❌ loadGraph error:', err);
+    container.innerHTML = `
+      <div style="color:#ef4444;padding:2rem;text-align:center">
+        <strong>Ошибка загрузки графа</strong><br>
+        ${err.message}<br><br>
+        <button onclick="loadGraph()" class="refresh-btn">Повторить</button>
+      </div>`;
+  }
 }
 
 function renderGraph3D(data) {
   const container = document.getElementById('graph-container');
   container.innerHTML = '';
-  const maxWeight = Math.max(...data.links.map(l => l.weight || 0), 0.001);
+
+  const maxWeight = Math.max(...(data.links || []).map(l => l.weight || 0), 0.001);
 
   const graphData = {
     nodes: data.nodes.map(n => ({
       ...n,
-      name: n.id.substring(0, 8),
+      name: (n.id || '').substring(0, 8),
       color: getNodeColor(n),
       val: getNodeSize(n),
     })),
-    links: data.links.map(l => ({
+    links: (data.links || []).map(l => ({
       ...l,
       _edgeColor: weightToColor(l.weight || 0, maxWeight),
     })),
   };
 
-  graph3d = ForceGraph3D({controlType:'orbit'})(container)
-    .width(container.clientWidth).height(container.clientHeight)
-    .backgroundColor('#060d18')
-    .nodeRelSize(4)         // базовый размер — умножается на val
-    .nodeLabel(n => `<div style="background:rgba(15,23,42,.95);border:1px solid #334155;border-radius:8px;padding:.5rem .75rem;font-family:monospace;font-size:.75rem;max-width:280px">
+  try {
+    graph3d = ForceGraph3D({ controlType: 'orbit' })(container)
+      .width(container.clientWidth)
+      .height(container.clientHeight)
+      .backgroundColor('#060d18')
+      .nodeRelSize(4)
+      .nodeLabel(n => `<div style="background:rgba(15,23,42,.95);border:1px solid #334155;border-radius:8px;padding:.5rem .75rem;font-family:monospace;font-size:.75rem;max-width:280px">
       <div style="color:#fbbf24;font-weight:bold;margin-bottom:.3rem">${n.id}</div>
       <div style="color:#94a3b8">domain: <span style="color:#e2e8f0">${n.domain}</span></div>
       <div style="color:#94a3b8">b_sync: <span style="color:#e2e8f0">${n.b_sync}</span></div>
       <div style="color:#94a3b8">stability: <span style="color:${getNodeColor(n)}">${n.stability}</span></div>
       <div style="color:#94a3b8">bridge: <span style="color:#e2e8f0">${n.is_bridge?'✅':'—'}</span></div>
     </div>`)
-    .nodeColor(n => n.color)
-    .nodeVal(n => n.val)
-    .nodeOpacity(0.95)
-    .linkColor(l => l._edgeColor)
-    .linkWidth(l => 0.4 + (l.weight / maxWeight) * 4.5)   // ← ширина по весу
-    .linkOpacity(0.75)
-    .linkLabel(l => `weight: ${(l.weight||0).toFixed(3)} · sim: ${(l.similarity||0).toFixed(3)}`)
-    .linkDistance(d => GRAPH_CONFIG.linkDistanceBase * 2)   // ← удвоение длины рёбер
-    .graphData(graphData)
-    .onNodeClick(node => showNodeDetail(node));
+      .nodeColor(n => n.color)
+      .nodeVal(n => n.val)
+      .nodeOpacity(0.95)
+      .linkColor(l => l._edgeColor)
+      .linkWidth(l => 0.4 + (l.weight / maxWeight) * 4.5)
+      .linkOpacity(0.75)
+      .linkLabel(l => `weight: ${(l.weight||0).toFixed(3)}`)
+      .linkDistance(() => GRAPH_CONFIG.linkDistanceBase * 2)   // ← удвоенная длина
+      .graphData(graphData)
+      .onNodeClick(node => showNodeDetail(node));
+  } catch (e) {
+    console.error('ForceGraph3D error:', e);
+    container.innerHTML = `<div style="color:#ef4444;padding:3rem">Ошибка 3D-библиотеки: ${e.message}</div>`;
+  }
 }
-
-function showNodeDetail(d) {
-  const panel = document.getElementById('node-detail');
-  const tc = getNodeColor(d);
-  panel.innerHTML = `<h4>🔍 Узел</h4>
-    <div class="detail-field"><div class="detail-key">ID</div><div class="detail-val" style="color:#fbbf24">${d.id}</div></div>
-    <div class="detail-field"><div class="detail-key">Domain</div><div class="detail-val">${d.domain}</div></div>
-    <div class="detail-field"><div class="detail-key">B_sync</div><div class="detail-val">${d.b_sync}</div></div>
-    <div class="detail-field"><div class="detail-key">Stability</div><div class="detail-val">
-      <span class="detail-badge" style="background:${tc}22;color:${tc};border:1px solid ${tc}66">${d.stability}</span>
-    </div></div>
-    <div class="detail-field"><div class="detail-key">Cluster</div><div class="detail-val">${d.cluster>=0?'#'+d.cluster:'изолирован'}</div></div>
-    <div class="detail-field"><div class="detail-key">Bridge</div><div class="detail-val">${d.is_bridge?'✅ ДА':'—'}</div></div>
-    <div style="margin-top:.75rem;display:flex;gap:.4rem;flex-wrap:wrap">
-      <button class="refresh-btn" style="font-size:.75rem;padding:.35rem .75rem" onclick="viewArtifact('${d.id}.json','${d.id}')">📄 Артефакт</button>
-      <button class="refresh-btn" style="font-size:.75rem;padding:.35rem .75rem;background:#ef444433;color:#ef4444" onclick="confirmDelete('${d.id}',event)">🗑 Удалить</button>
-    </div>`;
-}
-
-window.addEventListener('resize', () => {
-  if (graph3d) { const c=document.getElementById('graph-container'); graph3d.width(c.clientWidth).height(c.clientHeight); }
-});
 
 // ══════════════════════════════════════════════════════
 // QUARANTINE
