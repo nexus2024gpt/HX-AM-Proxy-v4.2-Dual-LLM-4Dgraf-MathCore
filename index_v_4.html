@@ -387,6 +387,7 @@ select.f-input option{background:#1e293b}
   <div class="list-toolbar">
     <button class="refresh-btn" onclick="loadTrash()">🔄 Обновить</button>
     <span style="font-size:.75rem;color:#64748b">Удалённые артефакты. Восстановление возможно до окончательного удаления.</span>
+    <button class="refresh-btn" style="background:#ef444433;color:#ef4444;margin-left:auto" onclick="clearTrash()">🗑 Очистить корзину</button>
   </div>
   <div id="trash-list">Загрузка...</div>
 </div>
@@ -483,12 +484,10 @@ select.f-input option{background:#1e293b}
           <div class="math-card-header">
             <span>💡</span>
             <span class="math-card-title">Вероятностные инсайты</span>
-            <select id="insights-filter" onchange="loadInsights()"
-              style="margin-left:auto;background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:.2rem .5rem;border-radius:5px;font-size:.72rem">
-              <option value="all">все</option>
-              <option value="monitoring">monitoring</option>
-              <option value="high_confidence">high</option>
-            </select>
+            <div style="margin-left:auto;display:flex;gap:.4rem">
+              <button id="btn-new" class="sort-btn active" onclick="filterInsights('new')">Новые (7дн)</button>
+              <button id="btn-old" class="sort-btn" onclick="filterInsights('old')">Старые</button>
+            </div>
           </div>
           <div class="math-card-body" id="insights-list" style="max-height:540px;overflow-y:auto">
             <div style="color:#475569;font-size:.8rem;font-style:italic">
@@ -592,6 +591,15 @@ select.f-input option{background:#1e293b}
 </div>
 
 <script>
+// ══════════════════════════════════════════════════════
+// GRAPH CONFIG (приём .bak + удвоение длины рёбер)
+// ══════════════════════════════════════════════════════
+const GRAPH_CONFIG = {
+  linkDistanceBase: 120,           // было ~60, теперь удвоено
+  excludeBak: true,
+  chargeStrength: -800,
+};
+
 // ══════════════════════════════════════════════════════
 // STATE
 // ══════════════════════════════════════════════════════
@@ -931,7 +939,7 @@ function renderHistory() {
     const q = (e.query||'').substring(0, 120);
     const at = (e.structural||{}).artifact_type || '—';
     const tc = typeColor(at);
-    const artId = e.artifact_id || e.job_id || '—';
+    const artId = e.artifact_id || e.job_id || e.filename?.replace('.json', '') || '—';
     return `<div class="history-item" onclick="showHistoryDetail(${realIdx})">
       <div class="history-timestamp">
         <span>🕐 ${t}</span>
@@ -1001,13 +1009,22 @@ function renderArtifacts() {
           </div>
           <div class="artifact-hypothesis">${escHtml(item.hypothesis_short||'')}</div>
         </div>
-        <div class="artifact-actions">
-          <button class="act-btn" onclick="viewArtifact('${item.file}','${item.id}')">👁</button>
+        <div class="artifact-actions" onclick="event.stopPropagation()">
           <button class="act-btn danger" onclick="confirmDelete('${item.id}',event)">🗑</button>
         </div>
       </div>
     </div>`;
   }).join('');
+  // Сделать всю строку кликабельной
+  container.querySelectorAll('.artifact-item').forEach(item => {
+    item.style.cursor = 'pointer';
+    item.addEventListener('click', (e) => {
+      if (!e.target.closest('.artifact-actions')) {
+        const artId = item.querySelector('.artifact-id-badge')?.textContent || '';
+        if (artId) viewArtifact(artId + '.json', artId);
+      }
+    });
+  });
 }
 
 async function confirmDelete(artId, evt) {
@@ -1066,7 +1083,15 @@ async function loadGraph() {
   try {
     const [phaseRes, dataRes] = await Promise.all([fetch('/phase'), fetch('/graph/data')]);
     const phase = await phaseRes.json();
-    const data = await dataRes.json();
+    let data = await dataRes.json();
+    
+    // Запрет .bak файлов
+    if (GRAPH_CONFIG.excludeBak) {
+      data.nodes = data.nodes.filter(n => !n.id.endsWith('.bak'));
+      data.links = data.links.filter(l => 
+        !l.source.endsWith('.bak') && !l.target.endsWith('.bak')
+      );
+    }
 
     const badge = document.getElementById('graph-phase-badge');
     if (phase.signal === 'sigma_primitive_candidate') {
@@ -1126,6 +1151,7 @@ function renderGraph3D(data) {
     .linkWidth(l => 0.4 + (l.weight / maxWeight) * 4.5)   // ← ширина по весу
     .linkOpacity(0.75)
     .linkLabel(l => `weight: ${(l.weight||0).toFixed(3)} · sim: ${(l.similarity||0).toFixed(3)}`)
+    .linkDistance(d => GRAPH_CONFIG.linkDistanceBase * 2)   // ← удвоение длины рёбер
     .graphData(graphData)
     .onNodeClick(node => showNodeDetail(node));
 }
@@ -1168,12 +1194,15 @@ async function loadQuarantine() {
       const t = new Date(e.time*1000).toLocaleString('ru-RU');
       const cc = codeColor[e.failure_code] || '#94a3b8';
       const rb = (e.rollback_actions||[]).join(', ')||'—';
-      return `<div class="history-item" style="border-left-color:#ef4444">
+      return `<div class="history-item" style="border-left-color:#ef4444;cursor:pointer" onclick="if(!event.target.closest('button')) viewArtifact('${e.artifact_id}.json','${e.artifact_id}')">
         <div class="history-timestamp"><span>🕐 ${t}</span><span style="color:#fbbf24;font-size:.68rem">stage: ${e.stage}</span></div>
         <div style="font-size:.85rem;color:#e2e8f0;margin:.3rem 0">${escHtml((e.query||'').substring(0,100))}</div>
         <div style="font-size:.75rem"><span style="background:${cc}22;color:${cc};border-radius:4px;padding:.1rem .4rem">${e.failure_code}</span></div>
         <div style="font-size:.75rem;color:#94a3b8;margin-top:.3rem">${escHtml(e.reason||'')}</div>
         ${rb!=='—'?'<div style="font-size:.7rem;color:#475569;margin-top:.25rem">Rollback: '+escHtml(rb)+'</div>':''}
+        <div style="margin-top:.4rem">
+          <button class="act-btn danger" onclick="deleteFromQuarantine('${e.artifact_id}');event.stopPropagation()">🗑 Удалить</button>
+        </div>
       </div>`;
     }).join('');
   } catch(err) { container.innerHTML = `<div style="color:#ef4444">${err.message}</div>`; }
@@ -1678,7 +1707,19 @@ function renderMathCurrentResult(data) {
   }
 
   document.getElementById('math-current-result').style.display = 'block';
-  document.getElementById('math-current-id').textContent = data.job_id || data.id || '';
+  const mathId = data.job_id || data.id || '';
+  const artifactId = data.artifact_id || '';
+  document.getElementById('math-current-id').textContent = mathId;
+  
+  // Сделать карточку кликабельной если есть artifact_id
+  const resultCard = document.getElementById('math-current-result');
+  if (artifactId) {
+    resultCard.style.cursor = 'pointer';
+    resultCard.onclick = () => viewArtifact(artifactId + '.json', artifactId);
+  } else {
+    resultCard.style.cursor = 'default';
+    resultCard.onclick = null;
+  }
 
   let html = '';
 
@@ -1822,7 +1863,7 @@ async function loadInsights() {
       const domArrow = `${ins.source_domain} → ${ins.target_domain}`;
       const ts = ins.generated_at ? new Date(ins.generated_at).toLocaleString('ru-RU') : '';
       const proto = (ins.prototype_id || '').substring(0, 8);
-      return `<div class="insight-item ${band}">
+      return `<div class="insight-item ${band}" data-createdAt="${ins.generated_at || Date.now()}">
         <div style="display:flex;align-items:center;gap:.5rem">
           <span class="insight-prob" style="color:${pColor}">${(p*100).toFixed(0)}%</span>
           <span class="insight-domains">${escHtml(domArrow)}</span>
@@ -1834,9 +1875,29 @@ async function loadInsights() {
         <div class="insight-meta">${ts}</div>
       </div>`;
     }).join('');
+    // Применить текущий фильтр к новым элементам
+    const currentFilter = document.getElementById('btn-new')?.classList.contains('active') ? 'new' : 'old';
+    filterInsights(currentFilter);
   } catch (e) {
     container.innerHTML = `<div style="color:#ef4444">${e.message}</div>`;
   }
+}
+
+function filterInsights(mode) {
+  document.querySelectorAll('#btn-new, #btn-old').forEach(b => b.classList.remove('active'));
+  document.getElementById(`btn-${mode}`).classList.add('active');
+  
+  const items = document.querySelectorAll('#insights-list .insight-item');
+  items.forEach(item => {
+    const dateStr = item.dataset.createdAt;
+    if (!dateStr) {
+      item.style.display = 'block';
+      return;
+    }
+    const date = new Date(dateStr);
+    const isNew = (Date.now() - date) < 86400000 * 7; // 7 дней
+    item.style.display = (mode === 'new' ? isNew : !isNew) ? 'block' : 'none';
+  });
 }
 
 async function loadMathStats() {
@@ -1848,6 +1909,31 @@ async function loadMathStats() {
     document.getElementById('ms-insights').textContent = data.insights ?? 0;
   } catch (e) { }
 }
+
+// ══════════════════════════════════════════════════════
+// QUARANTINE DELETE
+// ══════════════════════════════════════════════════════
+async function deleteFromQuarantine(id) {
+  if (!confirm('Удалить артефакт из карантина?')) return;
+  try {
+    const res = await fetch(`/quarantine/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.ok) loadQuarantine();
+  } catch(e) { alert('Ошибка: '+e.message); }
+}
+
+// ══════════════════════════════════════════════════════
+// TRASH CLEAR
+// ══════════════════════════════════════════════════════
+async function clearTrash() {
+  if (!confirm('Удалить ВСЕ файлы из корзины безвозвратно?')) return;
+  try {
+    const res = await fetch('/trash/clear', { method: 'DELETE' });
+    const data = await res.json();
+    if (data.ok) loadTrash();
+  } catch(e) { alert('Ошибка: '+e.message); }
+}
+
 </script>
 </body>
 </html>

@@ -147,7 +147,7 @@ class KuramotoSimulator:
     def run(self, omega_i: float, K: float, K_c: float, eta: float, tau: float,
             t_end: Optional[float] = None) -> Dict[str, Any]:
         N      = self.N
-        t_max  = T_MAX_FACTOR * max(tau, 0.1) if t_end is None else t_end
+        t_max = min(T_MAX_FACTOR * max(tau, 0.1), 100.0) if t_end is None else t_end
         t_span = (0.0, t_max)
         n_pts  = min(500, max(50, int(t_max * 20)))
         t_eval = np.linspace(0, t_max, n_pts)
