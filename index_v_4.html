@@ -43,15 +43,9 @@ textarea:focus{outline:none;border-color:#6366f1}
 
 /* Pipeline */
 .pipeline{display:flex;gap:1rem;flex-wrap:wrap;margin-top:1.5rem}
-.panel{background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:1rem;border-left:4px solid #6366f1}
-.panel h3{background:#334155;padding:.75rem;margin:0;font-size:1rem;color:#cbd5e1;border-radius:8px 8px 0 0}
+.panel{flex:1;min-width:280px;background:#1e293b;border-radius:12px;border-left:4px solid #6366f1;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,.3)}
+.panel h3{background:#334155;padding:.75rem;margin:0;font-size:1rem;color:#cbd5e1}
 .panel pre{padding:1rem;margin:0;font-size:.85rem;white-space:pre-wrap;word-wrap:break-word;color:#e2e8f0;max-height:300px;overflow-y:auto}
-
-.detail-field{margin-bottom:0.75rem}
-
-.detail-key{font-size:0.72rem;color:#64748b;text-transform:uppercase;letter-spacing:0.05em}
-
-.detail-val{color:#e2e8f0;font-size:0.9rem;line-height:1.4}
 
 /* History & Artifacts */
 .list-toolbar{display:flex;align-items:center;gap:.5rem;margin-bottom:.75rem;flex-wrap:wrap}
@@ -162,9 +156,6 @@ pre{white-space:pre-wrap;word-wrap:break-word}
 .t-table tr:hover td{background:#1e293b88}
 .t-badge{display:inline-block;padding:.1rem .35rem;border-radius:4px;font-size:.65rem;font-weight:bold}
 .t-badge.groq{background:#4ade8022;color:#4ade80}.t-badge.gemini{background:#60a5fa22;color:#60a5fa}.t-badge.hf{background:#a78bfa22;color:#a78bfa}
-.t-badge.nvidia { background:#22d3ee22; color:#22d3ee; border:1px solid #22d3ee44; }
-.t-badge.openrouter { background:#a78bfa22; color:#a78bfa; border:1px solid #a78bfa44; }
-.t-badge.custom { background:#f472b622; color:#f472b6; border:1px solid #f472b644; }
 .t-badge.nexus{background:#fbbf2422;color:#fbbf24}.t-badge.roman{background:#fb923c22;color:#fb923c}
 .t-badge.gen{background:#6366f122;color:#818cf8}.t-badge.ver{background:#22d3ee22;color:#22d3ee}
 .enabled-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:.3rem}
@@ -242,7 +233,7 @@ select.f-input option{background:#1e293b}
 .stress-running{color:#4ade80;font-size:.8rem;animation:pulse 1.2s infinite}
 
 /* Insights */
-.insight-item{background:#0f172a;padding:0.75rem;border-radius:8px;margin-bottom:0.5rem}
+.insight-item{background:#0f172a;border-radius:8px;padding:.7rem .85rem;margin-bottom:.55rem;border-left:3px solid #334155;cursor:pointer;transition:border-color .2s}
 .insight-item:hover{border-left-color:#6366f1}
 .insight-item.high{border-left-color:#4ade80}
 .insight-item.plausible{border-left-color:#f59e0b}
@@ -315,7 +306,7 @@ select.f-input option{background:#1e293b}
 
   <button class="submit-btn" id="submitBtn" onclick="sendQuery()">🚀 Отправить</button>
   <div id="loading" class="loading">⏳ Генерация и верификация...</div>
-  <div id="pipeline-result" class="pipeline"></div>
+  <div id="pipeline" class="pipeline"></div>
 </div>
 
 <!-- ГРАФ 3D -->
@@ -387,7 +378,6 @@ select.f-input option{background:#1e293b}
   <div class="list-toolbar">
     <button class="refresh-btn" onclick="loadTrash()">🔄 Обновить</button>
     <span style="font-size:.75rem;color:#64748b">Удалённые артефакты. Восстановление возможно до окончательного удаления.</span>
-    <button class="refresh-btn" style="background:#ef444433;color:#ef4444;margin-left:auto" onclick="clearTrash()">🗑 Очистить корзину</button>
   </div>
   <div id="trash-list">Загрузка...</div>
 </div>
@@ -484,10 +474,12 @@ select.f-input option{background:#1e293b}
           <div class="math-card-header">
             <span>💡</span>
             <span class="math-card-title">Вероятностные инсайты</span>
-            <div style="margin-left:auto;display:flex;gap:.4rem">
-              <button id="btn-new" class="sort-btn active" onclick="filterInsights('new')">Новые (7дн)</button>
-              <button id="btn-old" class="sort-btn" onclick="filterInsights('old')">Старые</button>
-            </div>
+            <select id="insights-filter" onchange="loadInsights()"
+              style="margin-left:auto;background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:.2rem .5rem;border-radius:5px;font-size:.72rem">
+              <option value="all">все</option>
+              <option value="monitoring">monitoring</option>
+              <option value="high_confidence">high</option>
+            </select>
           </div>
           <div class="math-card-body" id="insights-list" style="max-height:540px;overflow-y:auto">
             <div style="color:#475569;font-size:.8rem;font-style:italic">
@@ -568,133 +560,514 @@ select.f-input option{background:#1e293b}
     <div id="tracker-settings" class="tracker-tab-content">
       <div class="cfg-toolbar">
         <button class="cfg-btn primary" onclick="saveAllProviders()">💾 Сохранить всё</button>
-        <button class="cfg-btn primary" onclick="saveToEnv()">💾 Сохранить в .env (перезапуск сервера нужен)</button>
         <button class="cfg-btn" onclick="toggleAddForm()">➕ Добавить провайдера</button>
       </div>
       <div id="addProviderForm">
         <div style="font-size:.75rem;color:#6366f1;margin-bottom:.75rem;font-weight:600">➕ Новый провайдер</div>
         <div class="field-grid">
-          <div class="f-group"><div class="f-label">ID</div><input class="f-input" id="np-id" placeholder="custom_provider_123"></div>
-          <div class="f-group"><div class="f-label">Провайдер</div><input class="f-input" id="np-provider" placeholder="openrouter / nvidia / custom"></div>
+          <div class="f-group"><div class="f-label">ID</div><input class="f-input" id="np-id" placeholder="groq_third"></div>
+          <div class="f-group"><div class="f-label">Провайдер</div><select class="f-input" id="np-provider" onchange="onNewProviderChange()"><option value="groq">Groq</option><option value="gemini">Gemini</option><option value="huggingface">HuggingFace</option></select></div>
           <div class="f-group"><div class="f-label">Аккаунт</div><input class="f-input" id="np-account" placeholder="Nexus / Roman"></div>
-          <div class="f-group"><div class="f-label">Название</div><input class="f-input" id="np-label" placeholder="OpenRouter / NVIDIA / Custom"></div>
+          <div class="f-group"><div class="f-label">Название</div><input class="f-input" id="np-label" placeholder="Groq · Third"></div>
           <div class="f-group full"><div class="f-label">API Ключ</div><input class="f-input" id="np-key" type="password" placeholder="gsk_..."></div>
-          <div class="f-group"><div class="f-label">API Base URL</div><input class="f-input" id="np-base" placeholder="https://api.example.com"></div>
-          <div class="f-group"><div class="f-label">Модель</div><input class="f-input" id="np-model" placeholder="default / gpt-4o-mini / custom-model"></div>
+          <div class="f-group"><div class="f-label">API Base URL</div><input class="f-input" id="np-base"></div>
+          <div class="f-group"><div class="f-label">Модель</div><select class="f-input" id="np-model"></select></div>
         </div>
         <div style="margin-top:.6rem"><div class="f-label" style="margin-bottom:.4rem">Роли</div><div class="role-checks"><label><input type="checkbox" id="np-role-gen"> generator</label><label><input type="checkbox" id="np-role-ver"> verifier</label></div></div>
         <div style="display:flex;gap:.5rem;margin-top:.85rem"><button class="cfg-btn primary" onclick="addProvider()">Добавить</button><button class="cfg-btn" onclick="toggleAddForm()">Отмена</button></div>
       </div>
-      <div id="providerCards"></div>
+      <div id="provider-cards"></div>
     </div>
   </div>
 </div>
 
 <script>
 // ══════════════════════════════════════════════════════
-// 3D GRAPH (исправленная и безопасная версия)
+// STATE
+// ══════════════════════════════════════════════════════
+let historyEntries = [];
+let artifactsData = [];
+let histSortDir = 'desc';
+let artSortMode = 'new';
+let currentModalArtId = null;
+let trackerKnownModels = {};
+let trackerProviders = [];
+let allArtifactsForClarify = [];
+
+// ══════════════════════════════════════════════════════
+// NODE COLORS (единый источник истины для всех вкладок)
+// ══════════════════════════════════════════════════════
+const NODE_COLORS = {
+  stable_cluster:         '#4ade80',
+  'hyx-artifact':         '#4ade80',
+  'hyx-portal':           '#6366f1',
+  weak_pattern:           '#f59e0b',
+  mixed_patterns:         '#f59e0b',
+  noise:                  '#ef4444',
+  isolated:               '#ef4444',
+  sigma_primitive_candidate: '#94a3b8',   // ← серый, отличается от stable_cluster
+  terminological:         '#f97316',
+  unknown:                '#475569',
+};
+
+function typeColor(t) { return NODE_COLORS[t] || '#475569'; }
+
+function getNodeColor(node) {
+  if (node.is_bridge) return NODE_COLORS['hyx-portal'];
+  const s = node.stability || node.artifact_type || '';
+  // sigma_primitive_candidate по stability хранится как stable_cluster с phase_signal
+  // но artifact_type = sigma_primitive_candidate
+  return NODE_COLORS[node.artifact_type] || NODE_COLORS[s] || NODE_COLORS.unknown;
+}
+
+// Цвет ребра по весу: синий(0) → жёлтый(0.5) → красный(1)
+function weightToColor(w, maxW) {
+  if (!maxW || maxW === 0) return '#3b82f6';
+  const t = Math.min(w / maxW, 1.0);
+  if (t < 0.5) return lerpColor('#3b82f6', '#f59e0b', t * 2);
+  return lerpColor('#f59e0b', '#ef4444', (t - 0.5) * 2);
+}
+
+// ══════════════════════════════════════════════════════
+// TABS
+// ══════════════════════════════════════════════════════
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.getElementById(name + '-tab').classList.add('active');
+  if (name === 'history') loadHistory();
+  if (name === 'artifacts') loadArtifacts();
+  if (name === 'quarantine') loadQuarantine();
+  if (name === 'graph') loadGraph();
+  if (name === 'trash') loadTrash();
+  if (name === 'math') { loadMathStats(); loadInsights(); }
+}
+
+// ══════════════════════════════════════════════════════
+// RAG CONTEXT
+// ══════════════════════════════════════════════════════
+let ragTimer = null;
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('queryText').addEventListener('input', () => {
+    clearTimeout(ragTimer);
+    ragTimer = setTimeout(fetchRag, 600);
+  });
+});
+
+async function fetchRag() {
+  const text = document.getElementById('queryText').value.trim();
+  const block = document.getElementById('rag-block');
+  const items = document.getElementById('rag-items');
+  if (text.length < 10) { block.classList.remove('visible'); return; }
+  try {
+    const res = await fetch('/rag/context?text=' + encodeURIComponent(text) + '&top_k=3');
+    const data = await res.json();
+    if (!data.similar || !data.similar.length) { block.classList.remove('visible'); return; }
+    const dropped = data.dropped || 0;
+    items.innerHTML = data.similar.map(s => `
+      <div class="rag-item">
+        <span class="rag-domain">${s.domain}</span>
+        <span class="rag-sim">sim: ${s.similarity}</span>
+        <div class="rag-text">${escHtml(s.invariant)}</div>
+      </div>
+    `).join('') + (dropped > 0 ? `<div style="font-size:.68rem;color:#475569;margin-top:.3rem">⚠️ ${dropped} отфильтровано</div>` : '');
+    block.classList.add('visible');
+  } catch(e) { block.classList.remove('visible'); }
+}
+
+// ══════════════════════════════════════════════════════
+// MODEL BADGE
+// ══════════════════════════════════════════════════════
+function modelBadge(model) {
+  if (!model || model === 'none') return '';
+  const isHF = model.startsWith('huggingface/');
+  const isGroq = model.startsWith('groq/');
+  const isGemini = model.startsWith('gemini/');
+  const colors = { groq:'#4ade80', gemini:'#60a5fa', huggingface:'#a78bfa' };
+  const key = isGroq ? 'groq' : isGemini ? 'gemini' : 'huggingface';
+  const c = colors[key] || '#94a3b8';
+  const label = model.split('/').pop().substring(0, 24);
+  const tag = isHF ? '⚠️ fallback · ' : '';
+  return `<span style="font-size:.68rem;font-weight:normal;background:${c}22;color:${c};border:1px solid ${c}55;border-radius:4px;padding:.1rem .4rem;margin-left:.4rem">${tag}${label}</span>`;
+}
+
+function verPanel(ver) {
+  if (!ver) return '—';
+  const vcolor = ver.verdict==='VALID'?'#4ade80':ver.verdict==='WEAK'?'#fbbf24':'#ef4444';
+  const scolor = ver.translation?.survival==='STRUCTURAL'?'#4ade80':'#f59e0b';
+  let out = `verdict: <span style="color:${vcolor};font-weight:bold">${ver.verdict||'—'}</span>  conf: ${ver.confidence??'—'}\n`;
+  if (ver.translation) {
+    out += `\nStep 0 → <b>${ver.translation.target_domain||'?'}</b>\n`;
+    out += `survival: <span style="color:${scolor}">${ver.translation.survival||'?'}</span>\n`;
+    if (ver.translation.translated_mechanism)
+      out += `${escHtml(ver.translation.translated_mechanism.substring(0,180))}...\n`;
+  }
+  if (ver.issues?.length) { out += `\nissues:\n`; ver.issues.forEach(i => { out += `  · ${escHtml(i.substring(0,120))}\n`; }); }
+  if (ver.operationalization) {
+    const op = ver.operationalization;
+    out += `\nmodel: <span style="color:#60a5fa">${op.model||'?'}</span>\n`;
+    if (op.measurement) out += `measure: ${escHtml(op.measurement.substring(0,120))}\n`;
+    if (op.examples?.length) out += `example: ${escHtml(op.examples[0].substring(0,100))}\n`;
+  }
+  if (ver.refined_hypothesis)
+    out += `\n<span style="color:#c084fc">refined: ${escHtml(ver.refined_hypothesis.substring(0,200))}</span>\n`;
+  return out;
+}
+
+function archivistPanel(a) {
+  const noveltyColor = { 'PHENOMENAL':'#22d3ee','NOVEL':'#4ade80','KNOWN':'#94a3b8' };
+  const novelty = a.novelty || '—';
+  const isRephrasing = novelty.startsWith('REPHRASING_OF');
+  const nc = isRephrasing ? '#f59e0b' : (noveltyColor[novelty] || '#94a3b8');
+  const mathColor = a.mathematical_verification==='STRUCTURAL'?'#4ade80':a.mathematical_verification==='CONTRADICTION'?'#ef4444':'#f59e0b';
+  const links = (a.cross_domain_links||[]).join(', ') || '—';
+  const tags = (a.suggested_tags||[]).map(t=>`<span style="background:#6366f122;color:#818cf8;border-radius:4px;padding:.1rem .3rem;font-size:.7rem;margin-right:.2rem">${t}</span>`).join('');
+  const score = typeof a.novelty_score==='number'?(a.novelty_score*100).toFixed(0)+'%':'—';
+  const conf = typeof a.confidence==='number'?(a.confidence*100).toFixed(0)+'%':'—';
+  return `<div class="panel" style="border-left-color:#22d3ee;min-width:280px;flex:1">
+    <h3>🗄️ Archivist</h3>
+    <pre style="font-size:.82rem">Новизна: <span style="color:${nc};font-weight:bold">${novelty}</span>
+Верификация: <span style="color:${mathColor}">${a.mathematical_verification||'—'}</span>
+Novelty score: ${score}   Confidence: ${conf}
+Кросс-домен: ${links}
+Reasoning: ${escHtml(a.reasoning_summary||'—')}</pre>
+    ${tags ? '<div style="padding:.5rem 1rem .75rem">' + tags + '</div>' : ''}
+  </div>`;
+}
+
+// ══════════════════════════════════════════════════════
+// SEND QUERY
+// ══════════════════════════════════════════════════════
+async function sendQuery() {
+  const text = document.getElementById('queryText').value.trim();
+  if (!text) return;
+  const btn = document.getElementById('submitBtn');
+  const loading = document.getElementById('loading');
+  const pipeline = document.getElementById('pipeline');
+  const refNotice = document.getElementById('ref-update-notice');
+  btn.disabled = true;
+  loading.classList.add('active');
+  pipeline.innerHTML = '';
+  refNotice.style.display = 'none';
+
+  try {
+    const res = await fetch('/query', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text, domain: 'general', x_coordinate: 500})
+    });
+    const data = await res.json();
+
+    if (data.rejected) {
+      pipeline.innerHTML = `<div style="background:#1e293b;border-left:4px solid #ef4444;border-radius:12px;padding:1.25rem 1.5rem;color:#ef4444">
+        <div style="font-weight:bold;font-size:1.1rem;margin-bottom:.5rem">🚫 Запрос отклонён</div>
+        <div style="color:#94a3b8;font-size:.85rem;margin-bottom:.25rem">Stage: <span style="color:#fbbf24">${data.stage}</span></div>
+        <div style="color:#94a3b8;font-size:.85rem;margin-bottom:.25rem">Code: <span style="color:#f87171">${data.failure_code}</span></div>
+        <div style="color:#cbd5e1;font-size:.85rem;margin-top:.5rem">${escHtml(data.reason||'')}</div>
+      </div>`;
+      return;
+    }
+
+    // REF update notification
+    if (data.ref_updated) {
+      document.getElementById('ref-update-id').textContent = data.ref_updated;
+      refNotice.style.display = 'block';
+    }
+
+    const s = data.structural || {};
+    const tc = typeColor(s.artifact_type);
+    const ragCtx = data.rag_context || [];
+    pipeline.innerHTML = `
+      <div class="panel">
+        <h3>⚙️ Генератор · <b style="color:#fbbf24">${data.domain||'—'}</b>${ragCtx.length?' · 🧠 RAG:'+ragCtx.length:''}${data.rag_dropped?' · ✂️:'+data.rag_dropped:''} ${modelBadge(data.gen_model)}</h3>
+        <pre>${JSON.stringify(data.generation, null, 2)}</pre>
+      </div>
+      <div class="panel">
+        <h3>🔍 Верификатор ${modelBadge(data.ver_model)}</h3>
+        <pre>${verPanel(data.verification)}</pre>
+      </div>
+      <div class="panel">
+        <h3>✅ Структура</h3>
+        <pre>Тип: <span style="color:${tc}">${s.artifact_type||'—'}</span>
+Stability: ${s.stability||'—'}
+Specificity: ${s.specificity??'—'}
+Centrality: ${s.centrality??'—'}
+Bridge: ${s.is_bridge?'✅ ДА':'нет'}
+Similar: ${(s.similar_invariants||[]).length}
+Phase: ${s.phase_signal?.signal||'—'}
+Domains(window): ${s.phase_signal?.unique_domains??'—'}
+Сохранён: ${data.saved?'✅ ДА (ID: '+data.job_id+')':'нет'}</pre>
+      </div>
+      ${data.archivist ? archivistPanel(data.archivist) : ''}`;
+
+    if (data.generation?.four_d_matrix) {
+      renderFourDMatrix(data.generation.four_d_matrix, data.job_id);
+      renderMathCurrentResult(data);
+      loadInsights();
+      loadMathStats();
+    }
+
+    refreshTrackerDot();
+  } catch(err) {
+    pipeline.innerHTML = `<div style="color:#ef4444;padding:1rem">❌ ${err.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    loading.classList.remove('active');
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// HISTORY
+// ══════════════════════════════════════════════════════
+async function loadHistory() {
+  const container = document.getElementById('history-list');
+  container.innerHTML = 'Загрузка...';
+  try {
+    const res = await fetch('/history');
+    const data = await res.json();
+    historyEntries = data.history || [];
+    renderHistory();
+  } catch(err) { container.innerHTML = `<div style="color:#ef4444">${err.message}</div>`; }
+}
+
+function setSortHistory(dir) {
+  histSortDir = dir;
+  document.getElementById('hist-sort-desc').classList.toggle('active', dir==='desc');
+  document.getElementById('hist-sort-asc').classList.toggle('active', dir==='asc');
+  renderHistory();
+}
+
+function renderHistory() {
+  const container = document.getElementById('history-list');
+  if (!historyEntries.length) { container.innerHTML = '<p style="color:#94a3b8;text-align:center;">📭 Пусто</p>'; return; }
+  const sorted = histSortDir === 'asc' ? [...historyEntries] : [...historyEntries].reverse();
+  container.innerHTML = sorted.map((e, i) => {
+    const realIdx = histSortDir === 'asc' ? i : historyEntries.length - 1 - i;
+    const t = new Date(e.time * 1000).toLocaleString('ru-RU');
+    const q = (e.query||'').substring(0, 120);
+    const at = (e.structural||{}).artifact_type || '—';
+    const tc = typeColor(at);
+    const artId = e.artifact_id || e.job_id || '—';
+    return `<div class="history-item" onclick="showHistoryDetail(${realIdx})">
+      <div class="history-timestamp">
+        <span>🕐 ${t}</span>
+        <span style="font-family:monospace;color:#60a5fa;font-size:.68rem">${artId !== '—' ? '📄 ' + artId : ''}</span>
+      </div>
+      <div style="font-size:.75rem;color:#64748b;margin-bottom:.2rem"><b style="color:#94a3b8">${e.domain||'general'}</b> · <span style="color:${tc}">${at}</span>${(e.rag_context||[]).length?' · 🧠 RAG:'+e.rag_context.length:''}</div>
+      <div class="history-query">${escHtml(q)}</div>
+      <div class="history-meta">${e.saved?'✅ сохранён':'❌ не сохранён'}</div>
+    </div>`;
+  }).join('');
+}
+
+function showHistoryDetail(i) { const e = historyEntries[i]; if(e) showModal(JSON.stringify(e, null, 2), null); }
+
+// ══════════════════════════════════════════════════════
+// ARTIFACTS
+// ══════════════════════════════════════════════════════
+async function loadArtifacts() {
+  const container = document.getElementById('artifacts-list');
+  container.innerHTML = 'Загрузка...';
+  try {
+    const res = await fetch('/artifacts');
+    const data = await res.json();
+    artifactsData = data.artifacts || [];
+    renderArtifacts();
+  } catch(err) { container.innerHTML = `<div style="color:#ef4444">${err.message}</div>`; }
+}
+
+function setSortArtifacts(mode) {
+  artSortMode = mode;
+  document.querySelectorAll('.sort-btn[id^="art-sort"]').forEach(b => b.classList.remove('active'));
+  document.getElementById('art-sort-' + (mode==='new'?'new':mode==='old'?'old':mode==='bsync'?'bsync':'domain')).classList.add('active');
+  renderArtifacts();
+}
+
+function renderArtifacts() {
+  const container = document.getElementById('artifacts-list');
+  if (!artifactsData.length) { container.innerHTML = '<p style="color:#94a3b8;text-align:center;">📦 Пусто</p>'; return; }
+  let sorted = [...artifactsData];
+  if (artSortMode === 'old') sorted.reverse();
+  else if (artSortMode === 'bsync') sorted.sort((a,b) => (b.b_sync||0) - (a.b_sync||0));
+  else if (artSortMode === 'domain') sorted.sort((a,b) => (a.domain||'').localeCompare(b.domain||''));
+  // 'new' — уже в правильном порядке
+
+  container.innerHTML = sorted.map(item => {
+    const at = item.artifact_type || item.stability || 'unknown';
+    const tc = typeColor(at);
+    const isPortal = item.is_portal;
+    const vcolor = item.verdict==='VALID'?'#4ade80':item.verdict==='WEAK'?'#fbbf24':item.verdict==='FALSE'?'#ef4444':'#475569';
+    const noveltyShort = item.novelty ? item.novelty.split(':')[0] : '';
+    const nc = {PHENOMENAL:'#22d3ee',NOVEL:'#4ade80',KNOWN:'#94a3b8'}[noveltyShort] || '#475569';
+    const histMark = item.history_count > 0 ? `<span style="color:#60a5fa;font-size:.65rem">🔄 rev.${item.history_count}</span>` : '';
+    return `<div class="artifact-item">
+      <div class="artifact-row">
+        <div class="artifact-dot" style="background:${tc}" title="${at}"></div>
+        <div class="artifact-info">
+          <div class="artifact-name">
+            ${isPortal ? '🌀' : '📄'} ${item.file}
+            <span class="artifact-id-badge">${item.id}</span>
+            ${histMark}
+          </div>
+          <div class="artifact-meta">
+            <b style="color:#94a3b8">${item.domain||'—'}</b>
+            · <span style="color:${vcolor}">${item.verdict||'—'}</span> conf=${item.confidence}
+            · b_sync=<b>${item.b_sync}</b>
+            ${noveltyShort?`· <span style="color:${nc}">${noveltyShort}</span>`:''}
+          </div>
+          <div class="artifact-hypothesis">${escHtml(item.hypothesis_short||'')}</div>
+        </div>
+        <div class="artifact-actions">
+          <button class="act-btn" onclick="viewArtifact('${item.file}','${item.id}')">👁</button>
+          <button class="act-btn danger" onclick="confirmDelete('${item.id}',event)">🗑</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function confirmDelete(artId, evt) {
+  evt.stopPropagation();
+  if (!confirm(`Переместить артефакт ${artId} в корзину?`)) return;
+  try {
+    const res = await fetch(`/artifact/${artId}`, {method:'DELETE'});
+    const data = await res.json();
+    if (data.ok) { loadArtifacts(); loadGraph(); }
+  } catch(e) { alert('Ошибка: '+e.message); }
+}
+
+async function deleteCurrentArtifact() {
+  if (!currentModalArtId) return;
+  if (!confirm(`Переместить артефакт ${currentModalArtId} в корзину?`)) return;
+  try {
+    const res = await fetch(`/artifact/${currentModalArtId}`, {method:'DELETE'});
+    const data = await res.json();
+    if (data.ok) { closeModal(); loadArtifacts(); loadGraph(); }
+  } catch(e) { alert('Ошибка: '+e.message); }
+}
+
+async function viewArtifact(filename, artId) {
+  showModal('Загрузка...', artId || null);
+  try {
+    const res = await fetch(`/artifact/${encodeURIComponent(filename)}`);
+    if (!res.ok) throw new Error('Не найден');
+    const data = await res.json();
+    document.getElementById('artifactContent').textContent = JSON.stringify(data, null, 2);
+    if (artId) document.getElementById('modal-art-id').textContent = artId;
+  } catch(err) { document.getElementById('artifactContent').textContent = `Ошибка: ${err.message}`; }
+}
+
+function showModal(text, artId) {
+  currentModalArtId = artId || null;
+  document.getElementById('artifactContent').textContent = text;
+  document.getElementById('modal-art-id').textContent = artId || '';
+  document.getElementById('modal-delete-btn').style.display = artId ? 'inline-block' : 'none';
+  document.getElementById('artifactModal').style.display = 'block';
+}
+function closeModal() { document.getElementById('artifactModal').style.display = 'none'; currentModalArtId = null; }
+window.onclick = e => { if (e.target === document.getElementById('artifactModal')) closeModal(); if (e.target === document.getElementById('trackerModal')) closeTracker(); };
+
+// ══════════════════════════════════════════════════════
+// 3D GRAPH
 // ══════════════════════════════════════════════════════
 let graph3d = null;
 
+function getNodeSize(node) {
+  // Явная зависимость размера от b_sync: диапазон 2–18
+  const b = parseFloat(node.b_sync) || 0.1;
+  return 2 + Math.pow(b, 0.7) * 16;
+}
+
 async function loadGraph() {
-  const container = document.getElementById('graph-container');
   try {
-    const [phaseRes, dataRes] = await Promise.all([
-      fetch('/phase'),
-      fetch('/graph/data')
-    ]);
-    
+    const [phaseRes, dataRes] = await Promise.all([fetch('/phase'), fetch('/graph/data')]);
     const phase = await phaseRes.json();
-    let data = await dataRes.json();
+    const data = await dataRes.json();
 
-    // Запрет .bak
-    if (GRAPH_CONFIG.excludeBak) {
-      data.nodes = data.nodes.filter(n => !n.id?.endsWith('.bak'));
-      data.links = data.links.filter(l => 
-        !l.source?.endsWith('.bak') && !l.target?.endsWith('.bak')
-      );
-    }
-
-    // Безопасный вывод статистики
-    document.getElementById('stat-nodes').textContent = data.nodes?.length ?? 0;
-    document.getElementById('stat-edges').textContent = data.links?.length ?? 0;
-    document.getElementById('stat-clusters').textContent = '—';
-    document.getElementById('stat-bridges').textContent = '—';
-
-    // Фаза
     const badge = document.getElementById('graph-phase-badge');
     if (phase.signal === 'sigma_primitive_candidate') {
       badge.textContent = `⚡ SIGMA CANDIDATE · density=${phase.density} · domains=${phase.unique_domains}`;
       badge.className = 'sigma';
+    } else if (phase.signal === 'template_loop') {
+      badge.textContent = `⚠️ TEMPLATE LOOP · density=${phase.density} · domains=${phase.unique_domains}`;
+      badge.style.color = '#f59e0b'; badge.className = '';
     } else {
-      badge.textContent = `Phase: ${phase.signal || '—'}`;
-      badge.className = '';
+      badge.textContent = `Phase: ${phase.signal} · density=${phase.density}`;
+      badge.style.color = '#64748b'; badge.className = '';
     }
 
-    if (!data.nodes?.length) {
-      container.innerHTML = `<div style="color:#94a3b8;padding:3rem;text-align:center">Граф пуст (0 узлов)</div>`;
-      return;
-    }
+    document.getElementById('stat-nodes').textContent = data.meta.total_nodes;
+    document.getElementById('stat-edges').textContent = data.meta.total_edges;
+    document.getElementById('stat-clusters').textContent = data.meta.cluster_count;
+    document.getElementById('stat-bridges').textContent = data.meta.bridge_count;
 
+    if (!data.nodes.length) return;
     renderGraph3D(data);
-  } catch (err) {
-    console.error('❌ loadGraph error:', err);
-    container.innerHTML = `
-      <div style="color:#ef4444;padding:2rem;text-align:center">
-        <strong>Ошибка загрузки графа</strong><br>
-        ${err.message}<br><br>
-        <button onclick="loadGraph()" class="refresh-btn">Повторить</button>
-      </div>`;
-  }
+  } catch(err) { console.error('Graph load error:', err); }
 }
 
 function renderGraph3D(data) {
   const container = document.getElementById('graph-container');
   container.innerHTML = '';
-
-  const maxWeight = Math.max(...(data.links || []).map(l => l.weight || 0), 0.001);
+  const maxWeight = Math.max(...data.links.map(l => l.weight || 0), 0.001);
 
   const graphData = {
     nodes: data.nodes.map(n => ({
       ...n,
-      name: (n.id || '').substring(0, 8),
+      name: n.id.substring(0, 8),
       color: getNodeColor(n),
       val: getNodeSize(n),
     })),
-    links: (data.links || []).map(l => ({
+    links: data.links.map(l => ({
       ...l,
       _edgeColor: weightToColor(l.weight || 0, maxWeight),
     })),
   };
 
-  try {
-    graph3d = ForceGraph3D({ controlType: 'orbit' })(container)
-      .width(container.clientWidth)
-      .height(container.clientHeight)
-      .backgroundColor('#060d18')
-      .nodeRelSize(4)
-      .nodeLabel(n => `<div style="background:rgba(15,23,42,.95);border:1px solid #334155;border-radius:8px;padding:.5rem .75rem;font-family:monospace;font-size:.75rem;max-width:280px">
+  graph3d = ForceGraph3D({controlType:'orbit'})(container)
+    .width(container.clientWidth).height(container.clientHeight)
+    .backgroundColor('#060d18')
+    .nodeRelSize(4)         // базовый размер — умножается на val
+    .nodeLabel(n => `<div style="background:rgba(15,23,42,.95);border:1px solid #334155;border-radius:8px;padding:.5rem .75rem;font-family:monospace;font-size:.75rem;max-width:280px">
       <div style="color:#fbbf24;font-weight:bold;margin-bottom:.3rem">${n.id}</div>
       <div style="color:#94a3b8">domain: <span style="color:#e2e8f0">${n.domain}</span></div>
       <div style="color:#94a3b8">b_sync: <span style="color:#e2e8f0">${n.b_sync}</span></div>
       <div style="color:#94a3b8">stability: <span style="color:${getNodeColor(n)}">${n.stability}</span></div>
       <div style="color:#94a3b8">bridge: <span style="color:#e2e8f0">${n.is_bridge?'✅':'—'}</span></div>
     </div>`)
-      .nodeColor(n => n.color)
-      .nodeVal(n => n.val)
-      .nodeOpacity(0.95)
-      .linkColor(l => l._edgeColor)
-      .linkWidth(l => 0.4 + (l.weight / maxWeight) * 4.5)
-      .linkOpacity(0.75)
-      .linkLabel(l => `weight: ${(l.weight||0).toFixed(3)}`)
-      .linkDistance(() => GRAPH_CONFIG.linkDistanceBase * 2)   // ← удвоенная длина
-      .graphData(graphData)
-      .onNodeClick(node => showNodeDetail(node));
-  } catch (e) {
-    console.error('ForceGraph3D error:', e);
-    container.innerHTML = `<div style="color:#ef4444;padding:3rem">Ошибка 3D-библиотеки: ${e.message}</div>`;
-  }
+    .nodeColor(n => n.color)
+    .nodeVal(n => n.val)
+    .nodeOpacity(0.95)
+    .linkColor(l => l._edgeColor)
+    .linkWidth(l => 0.4 + (l.weight / maxWeight) * 4.5)   // ← ширина по весу
+    .linkOpacity(0.75)
+    .linkLabel(l => `weight: ${(l.weight||0).toFixed(3)} · sim: ${(l.similarity||0).toFixed(3)}`)
+    .graphData(graphData)
+    .onNodeClick(node => showNodeDetail(node));
 }
+
+function showNodeDetail(d) {
+  const panel = document.getElementById('node-detail');
+  const tc = getNodeColor(d);
+  panel.innerHTML = `<h4>🔍 Узел</h4>
+    <div class="detail-field"><div class="detail-key">ID</div><div class="detail-val" style="color:#fbbf24">${d.id}</div></div>
+    <div class="detail-field"><div class="detail-key">Domain</div><div class="detail-val">${d.domain}</div></div>
+    <div class="detail-field"><div class="detail-key">B_sync</div><div class="detail-val">${d.b_sync}</div></div>
+    <div class="detail-field"><div class="detail-key">Stability</div><div class="detail-val">
+      <span class="detail-badge" style="background:${tc}22;color:${tc};border:1px solid ${tc}66">${d.stability}</span>
+    </div></div>
+    <div class="detail-field"><div class="detail-key">Cluster</div><div class="detail-val">${d.cluster>=0?'#'+d.cluster:'изолирован'}</div></div>
+    <div class="detail-field"><div class="detail-key">Bridge</div><div class="detail-val">${d.is_bridge?'✅ ДА':'—'}</div></div>
+    <div style="margin-top:.75rem;display:flex;gap:.4rem;flex-wrap:wrap">
+      <button class="refresh-btn" style="font-size:.75rem;padding:.35rem .75rem" onclick="viewArtifact('${d.id}.json','${d.id}')">📄 Артефакт</button>
+      <button class="refresh-btn" style="font-size:.75rem;padding:.35rem .75rem;background:#ef444433;color:#ef4444" onclick="confirmDelete('${d.id}',event)">🗑 Удалить</button>
+    </div>`;
+}
+
+window.addEventListener('resize', () => {
+  if (graph3d) { const c=document.getElementById('graph-container'); graph3d.width(c.clientWidth).height(c.clientHeight); }
+});
 
 // ══════════════════════════════════════════════════════
 // QUARANTINE
@@ -712,15 +1085,12 @@ async function loadQuarantine() {
       const t = new Date(e.time*1000).toLocaleString('ru-RU');
       const cc = codeColor[e.failure_code] || '#94a3b8';
       const rb = (e.rollback_actions||[]).join(', ')||'—';
-      return `<div class="history-item" style="border-left-color:#ef4444;cursor:pointer" onclick="if(!event.target.closest('button')) viewArtifact('${e.artifact_id}.json','${e.artifact_id}')">
+      return `<div class="history-item" style="border-left-color:#ef4444">
         <div class="history-timestamp"><span>🕐 ${t}</span><span style="color:#fbbf24;font-size:.68rem">stage: ${e.stage}</span></div>
         <div style="font-size:.85rem;color:#e2e8f0;margin:.3rem 0">${escHtml((e.query||'').substring(0,100))}</div>
         <div style="font-size:.75rem"><span style="background:${cc}22;color:${cc};border-radius:4px;padding:.1rem .4rem">${e.failure_code}</span></div>
         <div style="font-size:.75rem;color:#94a3b8;margin-top:.3rem">${escHtml(e.reason||'')}</div>
         ${rb!=='—'?'<div style="font-size:.7rem;color:#475569;margin-top:.25rem">Rollback: '+escHtml(rb)+'</div>':''}
-        <div style="margin-top:.4rem">
-          <button class="act-btn danger" onclick="deleteFromQuarantine('${e.artifact_id}');event.stopPropagation()">🗑 Удалить</button>
-        </div>
       </div>`;
     }).join('');
   } catch(err) { container.innerHTML = `<div style="color:#ef4444">${err.message}</div>`; }
@@ -924,201 +1294,98 @@ async function loadTrackerProviders() {
     trackerKnownModels = data.known_models || {};
     renderProviderCards();
     updateNewProviderModels();
-  } catch (e) {
-    console.error('Failed to load providers:', e);
-  }
+  } catch(err) { console.error(err); }
 }
 
 function renderProviderCards() {
-  const container = document.getElementById('providerCards');
-  if (!container) return;
-
+  const container = document.getElementById('provider-cards');
   container.innerHTML = trackerProviders.map((p, i) => {
-    const pc = p.provider === 'groq' ? 'groq' :
-               p.provider === 'gemini' ? 'gemini' :
-               p.provider === 'huggingface' ? 'hf' :
-               p.provider === 'nvidia' ? 'nvidia' : 'unknown';
-
-    const rolesHtml = p.roles.map(r => 
-      `<span class="t-badge ${r==='generator'?'gen':'ver'}">${r}</span>`
-    ).join(' ');
-
-    const modelsHtml = (trackerKnownModels[p.provider] || []).map(m => 
-      `<option value="${m}" ${m === p.model ? 'selected' : ''}>${m}</option>`
-    ).join('');
-
-    return `
-      <div class="provider-card ${p.enabled ? '' : 'disabled'}" id="card-${p.id}">
-        <div class="provider-card-header" onclick="toggleCard('${p.id}')">
-          <span class="enabled-dot" style="background:${p.enabled ? '#4ade80' : '#475569'}"></span>
-          <span class="pc-label">${escHtml(p.label)}</span>
-          <span class="pc-meta">
-            <span class="t-badge ${pc}">${p.provider}</span>
-            <span class="t-badge ${p.account === 'Nexus' ? 'nexus' : 'roman'}">${p.account}</span>
-            ${rolesHtml}
-            <span style="color:#334155">pri=${p.priority}</span>
-          </span>
-          <span style="color:#334155;font-size:.8rem;margin-left:.5rem">▾</span>
+    const pc = p.provider==='groq'?'groq':p.provider==='gemini'?'gemini':'hf';
+    const roles = p.roles.map(r=>`<span class="t-badge ${r==='generator'?'gen':'ver'}">${r}</span>`).join(' ');
+    const models = (trackerKnownModels[p.provider]||[]).map(m=>`<option value="${m}" ${m===p.model?'selected':''}>${m}</option>`).join('');
+    return `<div class="provider-card ${p.enabled?'':'disabled'}" id="card-${p.id}">
+      <div class="provider-card-header" onclick="toggleCard('${p.id}')">
+        <span class="enabled-dot" style="background:${p.enabled?'#4ade80':'#475569'}"></span>
+        <span class="pc-label">${escHtml(p.label)}</span>
+        <span class="pc-meta"><span class="t-badge ${pc}">${p.provider}</span><span class="t-badge ${p.account==='Nexus'?'nexus':'roman'}">${p.account}</span>${roles}<span style="color:#334155">pri=${p.priority}</span></span>
+        <span style="color:#334155;font-size:.8rem;margin-left:.5rem">▾</span>
+      </div>
+      <div class="provider-card-body" id="body-${p.id}">
+        <div class="field-grid">
+          <div class="f-group"><div class="f-label">Название</div><input class="f-input" value="${escHtml(p.label)}" onchange="updateProvider(${i},'label',this.value)"></div>
+          <div class="f-group"><div class="f-label">Аккаунт</div><input class="f-input" value="${escHtml(p.account)}" onchange="updateProvider(${i},'account',this.value)"></div>
+          <div class="f-group full"><div class="f-label">API Ключ</div><input class="f-input" type="password" value="${escHtml(p.api_key)}" onchange="updateProvider(${i},'api_key',this.value)" onfocus="this.type='text'" onblur="this.type='password'"></div>
+          <div class="f-group"><div class="f-label">API Base URL</div><input class="f-input" value="${escHtml(p.api_base)}" onchange="updateProvider(${i},'api_base',this.value)"></div>
+          <div class="f-group"><div class="f-label">Модель</div><select class="f-input" onchange="updateProvider(${i},'model',this.value)">${models}<option value="${p.model}" ${!models.includes(p.model)?'selected':''}>— ${p.model}</option></select></div>
+          <div class="f-group"><div class="f-label">Приоритет</div><input class="f-input" type="number" min="1" max="99" value="${p.priority}" onchange="updateProvider(${i},'priority',parseInt(this.value))"></div>
         </div>
-        <div class="provider-card-body" id="body-${p.id}">
-          <div class="field-grid">
-            <div class="f-group"><div class="f-label">Название</div><input class="f-input" value="${escHtml(p.label)}" onchange="updateProvider(${i},'label',this.value)"></div>
-            <div class="f-group"><div class="f-label">Аккаунт</div><input class="f-input" value="${escHtml(p.account)}" onchange="updateProvider(${i},'account',this.value)"></div>
-            <div class="f-group full"><div class="f-label">API Ключ</div><input class="f-input" type="password" value="${escHtml(p.api_key)}" onchange="updateProvider(${i},'api_key',this.value)" onfocus="this.type='text'" onblur="this.type='password'"></div>
-            <div class="f-group"><div class="f-label">API Base URL</div><input class="f-input" value="${escHtml(p.api_base)}" onchange="updateProvider(${i},'api_base',this.value)"></div>
-            <div class="f-group"><div class="f-label">Модель</div><select class="f-input" onchange="updateProvider(${i},'model',this.value)">${modelsHtml}<option value="${p.model}" ${!modelsHtml.includes(p.model) ? 'selected' : ''}>— ${p.model}</option></select></div>
-            <div class="f-group"><div class="f-label">Приоритет</div><input class="f-input" type="number" min="1" max="99" value="${p.priority}" onchange="updateProvider(${i},'priority',parseInt(this.value))"></div>
-          </div>
-          <div style="margin-top:.6rem">
-            <div class="f-label" style="margin-bottom:.35rem">Роли</div>
-            <div class="role-checks">
-              <label><input type="checkbox" ${p.roles.includes('generator')?'checked':''} onchange="toggleRole(${i},'generator',this.checked)"> generator</label>
-              <label><input type="checkbox" ${p.roles.includes('verifier')?'checked':''} onchange="toggleRole(${i},'verifier',this.checked)"> verifier</label>
-            </div>
-          </div>
-          <div class="card-actions">
-            <button class="card-btn" onclick="toggleEnabled(${i})">${p.enabled ? '⏸ Отключить' : '▶ Включить'}</button>
-            <button class="card-btn danger" onclick="deleteProvider('${p.id}')">🗑 Удалить</button>
-          </div>
+        <div style="margin-top:.6rem"><div class="f-label" style="margin-bottom:.35rem">Роли</div><div class="role-checks">
+          <label><input type="checkbox" ${p.roles.includes('generator')?'checked':''} onchange="toggleRole(${i},'generator',this.checked)"> generator</label>
+          <label><input type="checkbox" ${p.roles.includes('verifier')?'checked':''} onchange="toggleRole(${i},'verifier',this.checked)"> verifier</label>
+        </div></div>
+        <div class="card-actions">
+          <button class="card-btn" onclick="toggleEnabled(${i})">${p.enabled?'⏸ Отключить':'▶ Включить'}</button>
+          <button class="card-btn danger" onclick="deleteProvider('${p.id}')">🗑 Удалить</button>
         </div>
-      </div>`;
+      </div>
+    </div>`;
   }).join('') || '<div style="color:#475569;text-align:center;padding:2rem">Нет провайдеров</div>';
 }
 
-function toggleCard(id) {
-  const body = document.getElementById('body-' + id);
-  if (body) body.classList.toggle('open');
-}
-
-function updateProvider(idx, field, value) {
-  if (trackerProviders[idx]) {
-    trackerProviders[idx][field] = value;
-  }
-}
-
+function toggleCard(id) { document.getElementById('body-'+id).classList.toggle('open'); }
+function updateProvider(idx, field, value) { trackerProviders[idx][field] = value; }
 function toggleRole(idx, role, checked) {
-  if (!trackerProviders[idx]) return;
-  let roles = trackerProviders[idx].roles || [];
-  if (checked) {
-    if (!roles.includes(role)) roles.push(role);
-  } else {
-    roles = roles.filter(r => r !== role);
-  }
-  trackerProviders[idx].roles = roles;
+  const roles = trackerProviders[idx].roles || [];
+  trackerProviders[idx].roles = checked ? [...new Set([...roles, role])] : roles.filter(r=>r!==role);
 }
-
-function toggleEnabled(idx) {
-  if (trackerProviders[idx]) {
-    trackerProviders[idx].enabled = !trackerProviders[idx].enabled;
-    renderProviderCards();
-  }
-}
+function toggleEnabled(idx) { trackerProviders[idx].enabled = !trackerProviders[idx].enabled; renderProviderCards(); }
 
 async function saveAllProviders() {
   try {
-    const res = await fetch('/tracker/providers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ providers: trackerProviders })
-    });
+    const res = await fetch('/tracker/providers', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({providers: trackerProviders})});
     const data = await res.json();
-    if (data.ok) {
-      alert(`✅ Сохранено ${data.count || trackerProviders.length} провайдеров`);
-      renderProviderCards();
-    } else {
-      alert('Ошибка сохранения');
-    }
-  } catch (err) {
-    alert('Ошибка: ' + err.message);
-  }
-}
-
-async function saveToEnv() {
-  if (!confirm('Сохранить текущие провайдеры в .env?\nСервер нужно будет перезапустить вручную после этого.')) return;
-
-  try {
-    const res = await fetch('/tracker/save-to-env', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ providers: trackerProviders })
-    });
-    const data = await res.json();
-
-    if (data.ok) {
-      alert('✅ Провайдеры сохранены в .env\nПерезапустите сервер для применения изменений.');
-    } else {
-      alert('Ошибка: ' + (data.error || 'неизвестная ошибка'));
-    }
-  } catch (e) {
-    alert('Ошибка соединения: ' + e.message);
-  }
+    if (data.ok) { renderProviderCards(); alert(`✅ Сохранено ${data.count} провайдеров`); }
+  } catch(err) { alert('Ошибка: '+err.message); }
 }
 
 async function deleteProvider(pid) {
   if (!confirm(`Удалить провайдера ${pid}?`)) return;
   try {
-    const res = await fetch(`/tracker/providers/${pid}`, { method: 'DELETE' });
+    const res = await fetch(`/tracker/providers/${pid}`, {method:'DELETE'});
     const data = await res.json();
-    if (data.ok) {
-      await loadTrackerProviders();
-    } else {
-      alert('Не удалось удалить');
-    }
-  } catch (err) {
-    alert('Ошибка: ' + err.message);
-  }
+    if (data.ok) await loadTrackerProviders();
+  } catch(err) { alert('Ошибка: '+err.message); }
 }
 
-function toggleAddForm() {
-  const form = document.getElementById('addProviderForm');
-  if (form) form.classList.toggle('open');
-}
-
+function toggleAddForm() { document.getElementById('addProviderForm').classList.toggle('open'); }
 function updateNewProviderModels() {
-  // Free-form provider input now uses manual model field, no preset model list needed.
+  const prov = document.getElementById('np-provider')?.value || 'groq';
+  const sel = document.getElementById('np-model');
+  if (!sel) return;
+  sel.innerHTML = (trackerKnownModels[prov]||[]).map(m=>`<option value="${m}">${m}</option>`).join('');
+  const baseMap = {groq:'https://api.groq.com/openai/v1', gemini:'https://generativelanguage.googleapis.com/v1beta', huggingface:'https://api-inference.huggingface.co/v1'};
+  const base = document.getElementById('np-base');
+  if (base && baseMap[prov]) base.value = baseMap[prov];
 }
-
-function onNewProviderChange() {
-  // No-op for free-form provider form.
-}
+function onNewProviderChange() { updateNewProviderModels(); }
 
 async function addProvider() {
-  const idField = document.getElementById('np-id').value.trim();
-  const id = idField ? idField.replace(/\s+/g, '_') : 'custom_' + Date.now();
-  const provider = document.getElementById('np-provider').value.trim() || 'custom';
-  const account = document.getElementById('np-account').value.trim() || 'Custom';
-  const label = document.getElementById('np-label').value.trim() || id;
+  const id = document.getElementById('np-id').value.trim().replace(/\s+/g,'_');
+  const provider = document.getElementById('np-provider').value;
+  const account = document.getElementById('np-account').value.trim();
+  const label = document.getElementById('np-label').value.trim();
   const api_key = document.getElementById('np-key').value.trim();
   const api_base = document.getElementById('np-base').value.trim();
-  const model = document.getElementById('np-model').value.trim() || 'default';
+  const model = document.getElementById('np-model').value;
   const roles = [];
   if (document.getElementById('np-role-gen').checked) roles.push('generator');
   if (document.getElementById('np-role-ver').checked) roles.push('verifier');
-
-  if (!api_key) {
-    alert('API Key обязателен');
-    return;
-  }
-
-  const newProvider = { id, provider, account, label, api_key, api_base, model, roles, enabled: true, priority: 99 };
-
+  if (!id || !api_key || !roles.length) { alert('Заполните ID, API ключ и выберите роль'); return; }
   try {
-    const res = await fetch('/tracker/providers/add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newProvider)
-    });
+    const res = await fetch('/tracker/providers/add', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, provider, account, label: label||id, api_key, api_base, model, roles, enabled:true, priority:99})});
     const data = await res.json();
-    if (data.ok) {
-      toggleAddForm();
-      await loadTrackerProviders();
-      alert(`✅ Провайдер "${label}" добавлен. Не забудьте нажать "Сохранить все провайдеры"`);
-    } else {
-      alert('Ошибка добавления');
-    }
-  } catch (err) {
-    alert('Ошибка: ' + err.message);
-  }
+    if (data.ok) { toggleAddForm(); await loadTrackerProviders(); }
+  } catch(err) { alert('Ошибка: '+err.message); }
 }
 
 // ══════════════════════════════════════════════════════
@@ -1146,13 +1413,7 @@ function escHtml(str) {
 // ══════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════
-window.onload = () => {
-  loadHistory();
-  loadArtifacts();
-  refreshTrackerDot();
-  loadMathStats();
-  loadTrackerProviders();
-};
+window.onload = () => { loadHistory(); loadArtifacts(); refreshTrackerDot(); loadMathStats(); };
 
 // ═════════════════════════════════════════════════════════════════════════════=
 // 4D MATRIX DISPLAY
@@ -1160,23 +1421,9 @@ window.onload = () => {
 
 let _lastFourD = null;
 let _lastJobId = null;
-let _lastData = null;
 
 function renderFourDMatrix(fd, jobId) {
-  if (!fd) {
-    const data = _lastData || {};
-    fd = safeGet(data, 'four_d_matrix', null) ||
-         safeGet(data, 'generation.four_d_matrix', null) ||
-         safeGet(data, 'gen.four_d_matrix', null) ||
-         safeGet(data, 'data.gen.four_d_matrix', null);
-  }
-
-  if (!fd || typeof fd !== 'object') {
-    document.getElementById('four-d-empty').style.display = 'block';
-    document.getElementById('four-d-matrix-display').style.display = 'none';
-    return;
-  }
-
+  if (!fd) return;
   _lastFourD = fd;
   if (jobId) _lastJobId = jobId;
 
@@ -1204,10 +1451,10 @@ function renderFourDMatrix(fd, jobId) {
 
   const modelEl = document.getElementById('four-d-model-pill');
   if (d.model) {
-    modelEl.innerHTML = `<span class="four-d-model-badge">${escHtml(d.model)}</span>`;
-  } else {
-    modelEl.innerHTML = `<span class="four-d-model-badge" style="opacity:0.5">—</span>`;
+    modelEl.innerHTML = `<span class="four-d-model-badge">${d.model}</span>`;
   }
+
+  if (jobId) document.getElementById('stress-artifact-id').value = jobId;
 }
 
 function fmtFd(v) {
@@ -1216,37 +1463,21 @@ function fmtFd(v) {
 }
 
 function renderMathCurrentResult(data) {
-  const sim = data.simulation || data.math?.simulation || {};
-  const res = data.resonance || data.math?.resonance || {};
-
-  if (!sim.base_simulation && !res.insights) {
-    document.getElementById('math-current-result').style.display = 'none';
-    return;
-  }
+  const sim = data.simulation;
+  const res = data.resonance;
+  if (!sim && !res) return;
 
   document.getElementById('math-current-result').style.display = 'block';
-  const mathId = data.job_id || data.id || '';
-  const artifactId = data.artifact_id || '';
-  document.getElementById('math-current-id').textContent = mathId;
-  
-  // Сделать карточку кликабельной если есть artifact_id
-  const resultCard = document.getElementById('math-current-result');
-  if (artifactId) {
-    resultCard.style.cursor = 'pointer';
-    resultCard.onclick = () => viewArtifact(artifactId + '.json', artifactId);
-  } else {
-    resultCard.style.cursor = 'default';
-    resultCard.onclick = null;
-  }
+  document.getElementById('math-current-id').textContent = data.job_id || '';
 
   let html = '';
 
-  if (sim.base_simulation) {
+  if (sim) {
     const sc = sim.stability_score ?? 0;
     const ly = sim.lyapunov_max ?? 0;
     const scColor = sc >= 0.7 ? '#4ade80' : sc >= 0.4 ? '#f59e0b' : '#ef4444';
     const lyColor = ly < 0 ? '#4ade80' : '#ef4444';
-
+    const lyLabel = ly < 0 ? 'устойчиво (λ<0)' : 'неустойчиво (λ>0)';
     html += `
       <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:.75rem">
         <div style="background:#0f172a;border-radius:8px;padding:.6rem 1rem;flex:1;min-width:120px;text-align:center">
@@ -1255,25 +1486,32 @@ function renderMathCurrentResult(data) {
         </div>
         <div style="background:#0f172a;border-radius:8px;padding:.6rem 1rem;flex:1;min-width:120px;text-align:center">
           <div style="font-size:1.5rem;font-weight:800;color:${lyColor};font-family:monospace">${ly.toFixed(3)}</div>
-          <div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em">λ_max · ${ly < 0 ? 'устойчиво' : 'неустойчиво'}</div>
+          <div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em">λ_max · ${lyLabel}</div>
         </div>
         <div style="background:#0f172a;border-radius:8px;padding:.6rem 1rem;flex:1;min-width:120px;text-align:center">
           <div style="font-size:1.5rem;font-weight:800;color:#60a5fa;font-family:monospace">${sim.cpu_time_s ?? '—'}s</div>
           <div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em">cpu time</div>
         </div>
+      </div>
+      <div style="font-size:.75rem;color:#94a3b8">
+        Граница: η_max=${sim.eta_critical ?? '—'} · 
+        K_above_Kc: ${sim.bifurcation_boundary?.K_above_critical ? '<span style="color:#4ade80">ДА</span>' : '<span style="color:#ef4444">НЕТ</span>'} · 
+        τ_max_stable=${sim.bifurcation_boundary?.tau_max_stable ?? '—'} · 
+        Выжил: <b style="color:${sim.survival_verified?'#4ade80':'#ef4444'}">${sim.survival_verified ? 'ДА' : 'НЕТ'}</b>
       </div>`;
   }
 
-  if (res.insights && res.insights.length) {
+  if (res && res.insights && res.insights.length) {
     html += `<div style="margin-top:.85rem;font-size:.72rem;color:#6366f1;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.4rem">
       Top 4D резонансы (${res.total})</div>`;
     res.insights.forEach(ins => {
       const p = ins.probability ?? 0;
       const band = ins.confidence_band || 'low';
+      const domArrow = `${ins.source_domain} → ${ins.target_domain}`;
       html += `<div class="insight-item ${band}" style="margin-bottom:.4rem">
         <div style="display:flex;align-items:center;gap:.5rem">
           <span class="insight-prob" style="color:${p>=0.7?'#4ade80':p>=0.5?'#f59e0b':'#ef4444'}">${(p*100).toFixed(0)}%</span>
-          <span class="insight-domains">${escHtml(`${ins.source_domain} → ${ins.target_domain}`)}</span>
+          <span class="insight-domains">${escHtml(domArrow)}</span>
           <span class="prob-badge ${band}" style="margin-left:auto">${band}</span>
         </div>
         <div class="insight-meta">iso_4d=${ins.iso_4d ?? '—'} · scale=${ins.scale_align ?? '—'} · proto=${(ins.prototype_id||'').substring(0,8)}</div>
@@ -1381,7 +1619,7 @@ async function loadInsights() {
       const domArrow = `${ins.source_domain} → ${ins.target_domain}`;
       const ts = ins.generated_at ? new Date(ins.generated_at).toLocaleString('ru-RU') : '';
       const proto = (ins.prototype_id || '').substring(0, 8);
-      return `<div class="insight-item ${band}" data-createdAt="${ins.generated_at || Date.now()}">
+      return `<div class="insight-item ${band}">
         <div style="display:flex;align-items:center;gap:.5rem">
           <span class="insight-prob" style="color:${pColor}">${(p*100).toFixed(0)}%</span>
           <span class="insight-domains">${escHtml(domArrow)}</span>
@@ -1393,29 +1631,9 @@ async function loadInsights() {
         <div class="insight-meta">${ts}</div>
       </div>`;
     }).join('');
-    // Применить текущий фильтр к новым элементам
-    const currentFilter = document.getElementById('btn-new')?.classList.contains('active') ? 'new' : 'old';
-    filterInsights(currentFilter);
   } catch (e) {
     container.innerHTML = `<div style="color:#ef4444">${e.message}</div>`;
   }
-}
-
-function filterInsights(mode) {
-  document.querySelectorAll('#btn-new, #btn-old').forEach(b => b.classList.remove('active'));
-  document.getElementById(`btn-${mode}`).classList.add('active');
-  
-  const items = document.querySelectorAll('#insights-list .insight-item');
-  items.forEach(item => {
-    const dateStr = item.dataset.createdAt;
-    if (!dateStr) {
-      item.style.display = 'block';
-      return;
-    }
-    const date = new Date(dateStr);
-    const isNew = (Date.now() - date) < 86400000 * 7; // 7 дней
-    item.style.display = (mode === 'new' ? isNew : !isNew) ? 'block' : 'none';
-  });
 }
 
 async function loadMathStats() {
@@ -1427,31 +1645,6 @@ async function loadMathStats() {
     document.getElementById('ms-insights').textContent = data.insights ?? 0;
   } catch (e) { }
 }
-
-// ══════════════════════════════════════════════════════
-// QUARANTINE DELETE
-// ══════════════════════════════════════════════════════
-async function deleteFromQuarantine(id) {
-  if (!confirm('Удалить артефакт из карантина?')) return;
-  try {
-    const res = await fetch(`/quarantine/${id}`, { method: 'DELETE' });
-    const data = await res.json();
-    if (data.ok) loadQuarantine();
-  } catch(e) { alert('Ошибка: '+e.message); }
-}
-
-// ══════════════════════════════════════════════════════
-// TRASH CLEAR
-// ══════════════════════════════════════════════════════
-async function clearTrash() {
-  if (!confirm('Удалить ВСЕ файлы из корзины безвозвратно?')) return;
-  try {
-    const res = await fetch('/trash/clear', { method: 'DELETE' });
-    const data = await res.json();
-    if (data.ok) loadTrash();
-  } catch(e) { alert('Ошибка: '+e.message); }
-}
-
 </script>
 </body>
 </html>
