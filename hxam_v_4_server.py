@@ -488,6 +488,31 @@ def process_query(req: QueryRequest):
             except Exception as e:
                 logger.warning(f"Job {job_id}: MathCore failed — {e}")
 
+
+        # ── PHENOMENAL GATE ──────────────────────────────────────────────────
+        # Если Archivist дал PHENOMENAL, но MathCore показал нестабильность —
+        # понижаем до NOVEL. Патчим и в памяти, и в сохранённом файле.
+        _arch = result.get("archivist") or {}
+        if _arch.get("novelty") == "PHENOMENAL":
+            _sim = result.get("simulation") or {}
+            _score = float(_sim.get("stability_score", 1.0))
+            if _score < 0.5:
+                _arch["novelty"] = "NOVEL"
+                _arch["_downgraded_from"] = "PHENOMENAL"
+                _arch["_downgrade_reason"] = f"stability_score={_score:.3f} < 0.5 (math gate)"
+                result["archivist"] = _arch
+                if save:
+                    try:
+                        _art_path = Path("artifacts") / f"{job_id}.json"
+                        if _art_path.exists():
+                            _art_data = json.loads(_art_path.read_text(encoding="utf-8"))
+                            _art_data["archivist"] = _arch
+                            _art_path.write_text(json.dumps(_art_data, ensure_ascii=False, indent=2))
+                    except Exception as _pe:
+                        logger.warning(f"PHENOMENAL gate patch failed: {_pe}")
+                logger.info(f"Job {job_id}: PHENOMENAL→NOVEL (math gate, score={_score:.3f})")
+        # ─────────────────────────────────────────────────────────────────────
+
         # ── ИСТОРИЯ ─────────────────────────────────────────────────
         log_history({
             "time": time.time(),

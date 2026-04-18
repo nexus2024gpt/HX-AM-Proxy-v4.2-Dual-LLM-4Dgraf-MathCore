@@ -7,9 +7,15 @@
     "3. NOVEL: similarity > 0.65 AND (new domain OR new domain combination)",
     "4. KNOWN: default if no matches"
   ],
-  "constraints": ["Ignore self-similarity", "Cross-domain links > terminology", "Skip rules 1-2 if survival == 'UNKNOWN'"],
+  "constraints": [
+    "Ignore self-similarity",
+    "Cross-domain links > terminology",
+    "Skip rules 1-2 if survival == 'UNKNOWN'",
+    "PHENOMENAL requires cross_domain_links to be explicitly named in hypothesis or mechanism text -- not inferred from vector proximity alone",
+    "If stability_score from simulation < 0.5, downgrade PHENOMENAL to NOVEL automatically"
+  ],
   "format": {
-    "novelty": "Enum", "is_rephrasing_of": "ID/null", "cross_domain_links": ["A→B"],
+    "novelty": "Enum", "is_rephrasing_of": "ID/null", "cross_domain_links": ["A->B"],
     "mathematical_verification": "STRUCTURAL/TERMINOLOGICAL/CONTRADICTION",
     "novelty_score": "0-1", "suggested_tags": ["list"], "confidence": "0-1",
     "linked_to": ["IDs"], "reasoning_summary": "1-2 sentences"

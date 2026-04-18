@@ -55,6 +55,6 @@ Desktop.ini
 dist/
 build/
 .pytest_cache/
-
+.tmp.driveupload
 # Ignore test scripts with API keys
 test_keys/

@@ -24,7 +24,7 @@ REQUIRED fields (exact spelling required):
     K = coupling constant [0,2]
     K_c = critical coupling threshold [0,2]
     *** IMPORTANT: Set K > K_c to represent a synchronized (super-critical) system ***
-    *** K < K_c means sub-critical (no synchronization) — only use for systems that are INTENTIONALLY below threshold ***
+    *** K < K_c means sub-critical (no synchronization) — only use for systems INTENTIONALLY below threshold ***
     p = percolation probability [0,1]
     model = choose by mechanism keyword:
       oscillator/sync/phase/rhythm/neural/cardiac → kuramoto
@@ -45,23 +45,47 @@ ANTIPATTERNS (never use):
 - DO NOT set K > 2.0 or K_c > 2.0 (hard limit)
 - DO NOT leave any four_d_matrix field as null or string
 - DO NOT set K < K_c unless the invariant explicitly describes a sub-critical phenomenon
+- DO NOT copy four_d_matrix numbers from this prompt example — derive ALL 14 parameters from YOUR hypothesis
 
 PRIORITY: Compare domains with maximum structural similarity but maximum scale difference.
 four_d_matrix must reflect the MECHANISM — choose parameters that match the actual dynamics.
 For most invariants (synchronized, stable, coherent systems): K should be 10-40% above K_c.
 
-OUTPUT FORMAT (exact):
+PARAMETER DERIVATION GUIDE (apply before writing four_d_matrix):
+- C: high (0.7-0.9) if modular/hierarchical; low (0.1-0.3) if diffuse/random
+- k: biological 6-12; social 15-40; molecular 3-8; economic markets 20-50
+- D: 1.0 = chain; 2.0 = planar; 2.5-3.5 = fractal/turbulent
+- tau: chemical/neural fast (0.1-1.0); economic cycles (2-8); ecological (5-15); climate (10-20)
+- H > 0.5 = persistent trend; H < 0.5 = anti-persistent (mean-reverting)
+- model: match keyword above — do NOT default to kuramoto when mechanism implies another
+
+OUTPUT FORMAT — JSON structure, replace 0.0 with YOUR computed values:
 {
   "hypothesis": "Russian text ≥30 words...",
   "mechanism": "Text with model and parameters...",
-  "domain": "biology",
-  "b_sync": 0.72,
+  "domain": "your_domain",
+  "b_sync": 0.0,
   "implication": "Russian consequence...",
   "four_d_matrix": {
-    "structure": {"C": 0.62, "k": 9.0, "D": 2.15},
-    "influence": {"h": 0.95, "T": 1.05, "eta": 0.18},
-    "dynamics": {"omega_i": 0.25, "K": 0.58, "K_c": 0.48, "p": 0.72, "model": "kuramoto"},
-    "time": {"tau": 0.55, "H": 0.79, "freq": 1.15}
+    "structure": {"C": 0.0, "k": 0.0, "D": 0.0},
+    "influence": {"h": 0.0, "T": 0.0, "eta": 0.0},
+    "dynamics": {"omega_i": 0.0, "K": 0.0, "K_c": 0.0, "p": 0.0, "model": "choose_from_list_above"},
+    "time": {"tau": 0.0, "H": 0.0, "freq": 0.0}
+  }
+}
+
+CALIBRATION EXAMPLE (delay model — hormonal population regulation in ecology):
+{
+  "hypothesis": "Гормональные циклы регуляции численности популяций хищник-жертва демонстрируют инвариант запаздывающей отрицательной обратной связи, который сохраняется при изменении климатических условий благодаря механизму компенсационной задержки реакции между изменением численности жертвы и гормональным ответом хищника.",
+  "mechanism": "Система delay с tau=4.5 (сезонный лаг), K=0.19 (сила связи хищник-жертва), K_c=0.15. tau_critical=pi/(2*K)=8.25 — система устойчива при tau<tau_c.",
+  "domain": "ecology",
+  "b_sync": 0.68,
+  "implication": "Экосистемы с задержкой ответа меньше tau_critical сохраняют цикличность при изменении внешних условий.",
+  "four_d_matrix": {
+    "structure": {"C": 0.41, "k": 14.0, "D": 1.85},
+    "influence": {"h": 2.30, "T": 1.80, "eta": 0.32},
+    "dynamics": {"omega_i": 0.08, "K": 0.19, "K_c": 0.15, "p": 0.55, "model": "delay"},
+    "time": {"tau": 4.50, "H": 0.62, "freq": 0.25}
   }
 }
 

@@ -298,8 +298,10 @@ class GraphInvariantStability:
             if abs(S_new - S) < 1e-9:
                 break
             S = 0.7 * S + 0.3 * S_new
-        order  = min(1.0, max(0.0, S + C * 0.15 - eta * 0.25))
-        stable = p > p_c and order > 0.4
+        # Normalize by proximity to critical threshold (prevents trivially high scores)
+        proximity = (p - p_c) / max(1.0 - p_c, 1e-6)  # 0=at threshold, 1=well above
+        order  = min(1.0, max(0.0, proximity * (1.0 + C * 0.15) - eta * 0.25))
+        stable = p > p_c and order > 0.3
         return {
             "model":             "graph_invariant",
             "p_c":               round(p_c, 4),
@@ -599,11 +601,14 @@ class ResonanceMatcher:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def find_similar(self, query_vec: np.ndarray,
-                     top_k: int = 5, threshold: float = 0.55) -> List[Dict]:
+                     top_k: int = 5, threshold: float = 0.55,
+                     exclude_id: str = "") -> List[Dict]:
         if not self._vectors:
             return []
         results = []
         for i, vec in enumerate(self._vectors):
+            if exclude_id and self._meta[i].get("id") == exclude_id:
+                continue
             r = self._res(query_vec, vec)
             if r >= threshold:
                 results.append({**self._meta[i], "4d_resonance": r})
@@ -686,13 +691,13 @@ class MathCore:
     def find_resonance(self, query_four_d: Dict, query_domain: str,
                        query_survival: str = "UNKNOWN",
                        target_domains: Optional[List[str]] = None,
-                       top_k: int = 3) -> Dict[str, Any]:
+                       top_k: int = 3, exclude_id: str = "") -> Dict[str, Any]:
         from schemas.four_d_matrix import FourDMatrix
         matrix = FourDMatrix.from_raw(query_four_d)
         if matrix is None:
             return {"error": "Invalid four_d_matrix", "insights": []}
         query_vec = matrix.to_vector()
-        similar   = self.resonance_matcher.find_similar(query_vec, top_k=top_k)
+        similar   = self.resonance_matcher.find_similar(query_vec, top_k=top_k, exclude_id=exclude_id)
         insights  = []
         for match in similar:
             iso_4d      = match.get("4d_resonance", 0.0)
