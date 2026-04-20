@@ -247,6 +247,50 @@ select.f-input option{background:#1e293b}
 .quar-entry-field{margin-bottom:.5rem;padding:.4rem .6rem;background:#0f172a;border-radius:6px}
 .quar-entry-key{font-size:.65rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.15rem}
 .quar-entry-val{font-size:.8rem;color:#e2e8f0;word-break:break-all}
+
+/* ── MGAP Industry Tab ─────────────────────────────────── */
+.mgap-toolbar{display:flex;align-items:center;gap:.75rem;margin-bottom:1rem;flex-wrap:wrap}
+.mgap-grid{display:grid;grid-template-columns:280px 1fr;gap:1rem;height:calc(100vh - 280px);min-height:500px}
+.mgap-sidebar{display:flex;flex-direction:column;gap:.6rem;overflow-y:auto}
+.mgap-main{overflow-y:auto}
+.mgap-model-card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:.65rem .85rem;cursor:pointer;transition:all .2s;border-left:3px solid #334155}
+.mgap-model-card:hover{border-color:#6366f1;background:#2d3a52}
+.mgap-model-card.active{border-left-color:#6366f1;background:#6366f111}
+.mgap-model-card.math-gi{border-left-color:#4ade80}
+.mgap-model-card.math-kur{border-left-color:#60a5fa}
+.mgap-model-card.math-delay{border-left-color:#f59e0b}
+.mgap-model-title{font-size:.82rem;font-weight:700;color:#e2e8f0;margin-bottom:.15rem}
+.mgap-model-meta{font-size:.68rem;color:#64748b;display:flex;gap:.5rem;flex-wrap:wrap}
+.mgap-math-badge{display:inline-block;border-radius:4px;padding:.08rem .35rem;font-size:.65rem;font-weight:700}
+.mgap-math-gi   {background:#4ade8022;color:#4ade80;border:1px solid #4ade8044}
+.mgap-math-kur  {background:#60a5fa22;color:#60a5fa;border:1px solid #60a5fa44}
+.mgap-math-delay{background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44}
+.mgap-math-lv   {background:#a78bfa22;color:#a78bfa;border:1px solid #a78bfa44}
+.mgap-match-header{display:flex;align-items:center;gap:.75rem;margin-bottom:1rem;flex-wrap:wrap}
+.mgap-resonance-pill{font-size:1.4rem;font-weight:800;font-family:monospace}
+.mgap-match-card{background:#1e293b;border-radius:12px;border:1px solid #334155;margin-bottom:.75rem;overflow:hidden}
+.mgap-match-card-head{background:#0f172a;padding:.6rem 1rem;display:flex;align-items:center;gap:.5rem;border-bottom:1px solid #1e3a5f}
+.mgap-match-card-title{font-size:.75rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.07em}
+.mgap-match-card-body{padding:.75rem 1rem}
+.mgap-param-row{display:flex;align-items:flex-start;gap:.75rem;padding:.4rem 0;border-bottom:1px solid #1e3a5f}
+.mgap-param-row:last-child{border:none}
+.mgap-param-key{font-family:monospace;color:#fbbf24;font-size:.75rem;width:55px;flex-shrink:0}
+.mgap-param-arrow{color:#475569;font-size:.7rem;flex-shrink:0;margin-top:.1rem}
+.mgap-param-industry{flex:1}
+.mgap-param-name{font-size:.8rem;color:#e2e8f0;font-weight:600}
+.mgap-param-desc{font-size:.7rem;color:#64748b;margin-top:.1rem;line-height:1.4}
+.mgap-param-val{font-family:monospace;font-size:.78rem;color:#22d3ee;flex-shrink:0}
+.mgap-code-block{background:#060d18;border-radius:8px;padding:.75rem;font-family:monospace;font-size:.72rem;color:#4ade80;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto;border:1px solid #1e3a5f;margin-top:.5rem}
+.mgap-calc-grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-top:.5rem}
+.mgap-calc-cell{background:#0f172a;border-radius:7px;padding:.5rem .75rem;text-align:center}
+.mgap-calc-val{font-size:1.1rem;font-weight:800;font-family:monospace}
+.mgap-calc-label{font-size:.65rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-top:.15rem}
+.mgap-warn-badge{display:inline-flex;align-items:center;gap:.3rem;padding:.2rem .6rem;border-radius:20px;font-size:.72rem;font-weight:700}
+.mgap-warn-yes{background:#ef444422;color:#ef4444;border:1px solid #ef444444}
+.mgap-warn-no {background:#4ade8022;color:#4ade80;border:1px solid #4ade8044}
+.mgap-verdict-dev{background:#6366f111;border-radius:8px;padding:.65rem .85rem;margin-bottom:.5rem;font-size:.78rem}
+.mgap-verdict-biz{background:#4ade8011;border-radius:8px;padding:.65rem .85rem;font-size:.78rem}
+.mgap-verdict-label{font-size:.65rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem}
 </style>
 </head>
 <body>
@@ -267,6 +311,7 @@ select.f-input option{background:#1e293b}
   <button class="tab-button" onclick="switchTab('quarantine',this)">🚫 Карантин</button>
   <button class="tab-button" onclick="switchTab('trash',this)">🗑️ Корзина</button>
   <button class="tab-button" onclick="switchTab('math',this)">📐 Math</button>
+  <button class="tab-button" onclick="switchTab('mgap',this)">🏭 Industry</button>
 </div>
 
 <!-- ЗАПРОС -->
@@ -431,6 +476,11 @@ select.f-input option{background:#1e293b}
               </div>
             </div>
           </div>
+          <div id="four-d-quick-stress" style="display:none;margin-top:.75rem;padding-top:.6rem;border-top:1px solid #1e3a5f">
+            <button onclick="quickStressFromLast()" style="background:#4ade8022;color:#4ade80;border:1px solid #4ade8044;padding:.35rem .8rem;border-radius:6px;cursor:pointer;font-size:.78rem;font-family:inherit">
+              🔬 Стресс-тест этого артефакта
+            </button>
+          </div>
         </div>
       </div>
 
@@ -495,6 +545,56 @@ select.f-input option{background:#1e293b}
     </div>
   </div>
 </div>
+
+  <div id="mgap-tab" class="tab-content">
+
+    <div class="mgap-toolbar">
+      <div>
+        <input id="mgap-artifact-id" type="text" placeholder="artifact_id (12 симв.)"
+          style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:.45rem .75rem;border-radius:6px;font-size:.83rem;font-family:monospace;width:180px">
+        <select id="mgap-topk" style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;padding:.45rem .6rem;border-radius:6px;font-size:.83rem;margin-left:.4rem">
+          <option value="1">Top 1</option>
+          <option value="3" selected>Top 3</option>
+          <option value="5">Top 5</option>
+        </select>
+        <label style="font-size:.78rem;color:#94a3b8;margin-left:.6rem;cursor:pointer">
+          <input type="checkbox" id="mgap-all-types" style="margin-right:.3rem">Все math_type
+        </label>
+        <button onclick="runMgapMatch()" class="submit-btn" style="padding:.45rem 1rem;font-size:.85rem;margin-left:.5rem">
+          🏭 Найти отрасли
+        </button>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:.4rem;align-items:center">
+        <button onclick="loadMgapRegistry()" class="refresh-btn" style="font-size:.78rem;padding:.35rem .75rem">📋 Реестр</button>
+        <button onclick="runMgapBatch()" class="refresh-btn" style="font-size:.78rem;padding:.35rem .75rem;background:#f59e0b33;color:#f59e0b">⚡ Batch все артефакты</button>
+      </div>
+    </div>
+
+    <div id="mgap-batch-bar" style="display:none;background:#f59e0b11;border:1px solid #f59e0b33;border-radius:8px;padding:.6rem 1rem;margin-bottom:.75rem;font-size:.8rem;color:#f59e0b">
+      ⏳ Batch запущен... это может занять 15–30 сек.
+    </div>
+
+    <div class="mgap-grid">
+      <div class="mgap-sidebar" id="mgap-registry-panel">
+        <div style="font-size:.7rem;color:#475569;text-transform:uppercase;letter-spacing:.07em;padding:.2rem 0">
+          Реестр отраслевых моделей
+        </div>
+        <div id="mgap-registry-list">
+          <div style="color:#475569;font-size:.78rem;font-style:italic">
+            Нажмите «Реестр» для загрузки или выберите артефакт и нажмите «Найти отрасли».
+          </div>
+        </div>
+      </div>
+
+      <div class="mgap-main" id="mgap-results-panel">
+        <div style="color:#475569;font-size:.82rem;font-style:italic;padding:2rem;text-align:center">
+          Введите artifact_id и нажмите «Найти отрасли».<br>
+          MGAP найдёт отраслевые модели с наибольшим резонансом и покажет перевод параметров, слепую зону и код адаптации.
+        </div>
+      </div>
+    </div>
+
+  </div>
 </div><!-- /container -->
 
 <!-- ARTIFACT MODAL -->
@@ -645,10 +745,240 @@ function switchTab(name, btn) {
   if (name === 'graph')      loadGraph();
   if (name === 'trash')      loadTrash();
   if (name === 'math')       { loadMathStats(); loadInsights(); }
+  if (name === 'mgap')       loadMgapRegistry();
 }
 
 // ══════════════════════════════════════════════════════
-// RAG
+// MGAP
+
+let _mgapRegistry = [];
+
+function _mgapMathClass(mt) {
+  if (!mt) return '';
+  const m = mt.toLowerCase();
+  if (m === 'graph_invariant') return 'math-gi';
+  if (m === 'kuramoto') return 'math-kur';
+  if (m === 'delay' || m === 'delay_ode') return 'math-delay';
+  return 'math-lv';
+}
+
+function _mgapMathBadge(mt) {
+  if (!mt) return '';
+  const cls = _mgapMathClass(mt);
+  return `<span class="mgap-math-badge mgap-${cls.replace('math-','')}">${escHtml(mt)}</span>`;
+}
+
+async function loadMgapRegistry() {
+  const list = document.getElementById('mgap-registry-list');
+  if (!list) return;
+  list.innerHTML = '<div style="color:#64748b;font-size:.78rem">Загрузка...</div>';
+  try {
+    const res  = await fetch('/mgap/registry');
+    const data = await res.json();
+    _mgapRegistry = data.models || [];
+    list.innerHTML = _mgapRegistry.map(m => {
+      const mc = _mgapMathClass(m.math_type);
+      return `<div class="mgap-model-card ${mc}" onclick="filterMgapByModel('${escHtml(m.id)}')">
+        <div class="mgap-model-title">${escHtml(m.id)} · ${escHtml(m.name)}</div>
+        <div class="mgap-model-meta">
+          <span>${escHtml(m.logia)}</span>
+          ${_mgapMathBadge(m.math_type)}
+          <span style="color:#475569">${escHtml((m.programs||[]).slice(0,2).join(', '))}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    list.innerHTML = `<div style="color:#ef4444">${escHtml(e.message)}</div>`;
+  }
+}
+
+function filterMgapByModel(modelId) {
+  const artId = document.getElementById('mgap-artifact-id').value.trim();
+  if (!artId) { alert('Введите artifact_id'); return; }
+  runMgapMatch(modelId);
+}
+
+async function runMgapMatch(modelId = '') {
+  const artId    = document.getElementById('mgap-artifact-id').value.trim();
+  const topK     = parseInt(document.getElementById('mgap-topk').value) || 3;
+  const allTypes = document.getElementById('mgap-all-types').checked;
+  if (!artId) { alert('Введите artifact_id'); return; }
+
+  const panel = document.getElementById('mgap-results-panel');
+  if (!panel) return;
+  panel.innerHTML = '<div style="color:#6366f1;padding:1rem;animation:pulse 1.2s infinite">⏳ Поиск отраслевых резонансов...</div>';
+
+  try {
+    let url = `/mgap/match/${artId}?top_k=${topK}&all_types=${allTypes}`;
+    if (modelId) url += `&model_id=${encodeURIComponent(modelId)}`;
+    const res  = await fetch(url);
+    const data = await res.json();
+    renderMgapMatches(data);
+  } catch(e) {
+    panel.innerHTML = `<div style="color:#ef4444;padding:1rem">❌ ${escHtml(e.message)}</div>`;
+  }
+}
+
+async function runMgapBatch() {
+  const bar = document.getElementById('mgap-batch-bar');
+  const panel = document.getElementById('mgap-results-panel');
+  if (!bar || !panel) return;
+  bar.style.display = 'block';
+  panel.innerHTML = '';
+  try {
+    const res  = await fetch('/mgap/batch', {method:'POST'});
+    const data = await res.json();
+    bar.style.display = 'none';
+    renderMgapBatch(data);
+  } catch(e) {
+    bar.style.display = 'none';
+    panel.innerHTML = `<div style="color:#ef4444;padding:1rem">❌ ${escHtml(e.message)}</div>`;
+  }
+}
+
+function _resColor(r) {
+  return r >= 0.8 ? '#4ade80' : r >= 0.6 ? '#f59e0b' : '#ef4444';
+}
+
+function renderMgapMatches(data) {
+  const panel = document.getElementById('mgap-results-panel');
+  if (!panel) return;
+  if (data.error) { panel.innerHTML = `<div style="color:#ef4444;padding:1rem">❌ ${escHtml(data.error)}</div>`; return; }
+  const matches = data.matches || [];
+  if (!matches.length) { panel.innerHTML = '<div style="color:#475569;padding:1rem">Совпадений не найдено.</div>'; return; }
+  panel.innerHTML = matches.map((m) => renderMgapMatch(m)).join('');
+}
+
+function renderMgapMatch(m) {
+  const rc = _resColor(m.resonance || 0);
+  const warn = m.calculation?.warning_triggered;
+  const warnBadge = warn
+    ? '<span class="mgap-warn-badge mgap-warn-yes">⚠️ Порог превышен</span>'
+    : '<span class="mgap-warn-badge mgap-warn-no">✅ Стабильно</span>';
+  const matchBadge = m.math_type_match
+    ? '<span style="color:#4ade80;font-size:.7rem">✓ math_type совпадает</span>'
+    : '<span style="color:#94a3b8;font-size:.7rem">∿ разные math_type</span>';
+
+  const trans = m.translation || {};
+  const transRows = Object.entries(trans)
+    .filter(([k]) => k !== '_thresholds')
+    .map(([k, v]) => {
+      if (typeof v !== 'object') return '';
+      const val = v.value !== undefined ? v.value : '—';
+      return `<div class="mgap-param-row">
+        <span class="mgap-param-key">${escHtml(v.math_param || k)}</span>
+        <span class="mgap-param-arrow">→</span>
+        <div class="mgap-param-industry">
+          <div class="mgap-param-name">${escHtml(k)}</div>
+          <div class="mgap-param-desc">${escHtml(v.description || '')}</div>
+        </div>
+        <span class="mgap-param-val">${typeof val === 'number' ? val.toFixed(3) : escHtml(val)}</span>
+      </div>`;
+    }).join('');
+
+  const calc = m.calculation || {};
+  const thresholds = trans._thresholds || {};
+  let calcHtml = '<div style="color:#64748b;font-size:.82rem">Нет дополнительных данных расчёта.</div>';
+  if (calc.example_type === 'graph_invariant') {
+    calcHtml = `<div class="mgap-calc-grid">
+      <div class="mgap-calc-cell"><div class="mgap-calc-val" style="color:#f59e0b">${fmtFd(calc.computed_cv)}</div><div class="mgap-calc-label">CV реальный</div></div>
+      <div class="mgap-calc-cell"><div class="mgap-calc-val" style="color:#6366f1">${fmtFd(thresholds.eta_critical)}</div><div class="mgap-calc-label">η_critical</div></div>
+      <div class="mgap-calc-cell"><div class="mgap-calc-val" style="color:#fbbf24">${fmtFd(calc.old_buffer)}</div><div class="mgap-calc-label">Старый буфер</div></div>
+      <div class="mgap-calc-cell"><div class="mgap-calc-val" style="color:#4ade80">${fmtFd(calc.new_buffer)}</div><div class="mgap-calc-label">Новый буфер</div></div>
+    </div>`;
+  } else if (calc.example_type === 'kuramoto') {
+    const sw = Array.isArray(calc.warnings) ? calc.warnings.join('<br>') : 'нет';
+    calcHtml = `<div style="font-size:.78rem;color:#94a3b8;margin-top:.5rem">
+      K > K_c: <b style="color:${calc.K_above_Kc?'#4ade80':'#ef4444'}">${calc.K_above_Kc?'Да':'Нет'}</b> &nbsp;
+      Шум OK: <b style="color:${calc.noise_ok?'#4ade80':'#ef4444'}">${calc.noise_ok?'Да':'Нет'}</b> &nbsp;
+      Задержка OK: <b style="color:${calc.delay_ok?'#4ade80':'#ef4444'}">${calc.delay_ok?'Да':'Нет'}</b><br>
+      <span style="color:#ef4444">${sw !== 'нет' ? '⚠️ ' + sw : ''}</span>
+    </div>`;
+  } else if (calc.example_type === 'delay') {
+    calcHtml = `<div class="mgap-calc-grid">
+      <div class="mgap-calc-cell"><div class="mgap-calc-val" style="color:${(calc.stability_margin||0)>0.3?'#4ade80':'#ef4444'}">${fmtFd(calc.stability_margin)}</div><div class="mgap-calc-label">Запас устойчивости</div></div>
+      <div class="mgap-calc-cell"><div class="mgap-calc-val">${fmtFd(calc.noise_margin)}</div><div class="mgap-calc-label">Запас по шуму</div></div>
+      <div class="mgap-calc-cell"><div class="mgap-calc-val">${fmtFd(calc.delay_margin)}</div><div class="mgap-calc-label">Запас по задержке</div></div>
+      <div class="mgap-calc-cell"><div class="mgap-calc-val">${fmtFd(calc.coupling_margin)}</div><div class="mgap-calc-label">Запас K</div></div>
+    </div>`;
+  }
+
+  const vDev = m.verdict?.for_developer || {};
+  const vBiz = m.verdict?.for_business || {};
+
+  return `<div class="mgap-match-card" style="border-left:4px solid ${rc}">
+    <div class="mgap-match-card-head">
+      <span class="mgap-resonance-pill" style="color:${rc}">${((m.resonance||0)*100).toFixed(0)}%</span>
+      <div>
+        <div style="font-size:.88rem;font-weight:700;color:#e2e8f0">${escHtml(m.model_id)} · ${escHtml(m.model_name||'')} <span style="color:#64748b;font-weight:400">[${escHtml(m.logia||'')}]</span></div>
+        <div style="font-size:.7rem;color:#64748b;margin-top:.1rem">${escHtml((m.programs||[]).join(' · '))} &nbsp;|&nbsp; ${matchBadge}</div>
+      </div>
+      <div style="margin-left:auto">${warnBadge}</div>
+    </div>
+    <div class="mgap-match-card-body">
+      <div style="font-size:.72rem;color:#64748b;margin-bottom:.6rem">
+        <b>Артефакт:</b> ${escHtml(m.artifact_summary?.domain||'—')} · stability=${escHtml(m.artifact_summary?.stability_score||'—')} · novelty=<span style="color:#22d3ee">${escHtml(m.artifact_summary?.novelty||'—')}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem">
+        <div class="mgap-match-card" style="margin:0">
+          <div class="mgap-match-card-head"><span class="mgap-match-card-title">🔤 Перевод параметров</span></div>
+          <div class="mgap-match-card-body" style="padding:.5rem .75rem">${transRows || '<div style="color:#64748b;font-size:.82rem">Нет перевода параметров.</div>'}</div>
+        </div>
+        <div class="mgap-match-card" style="margin:0;border-left:3px solid #ef444455">
+          <div class="mgap-match-card-head"><span class="mgap-match-card-title">🛡️ Слепая зона</span></div>
+          <div class="mgap-match-card-body" style="padding:.5rem .75rem;color:#94a3b8;font-size:.82rem">${escHtml(m.blind_spot || 'Нет данных')}</div>
+        </div>
+      </div>
+      <div class="mgap-match-card" style="margin-bottom:.75rem">
+        <div class="mgap-match-card-head"><span class="mgap-match-card-title">🧮 Расчёт на примере</span></div>
+        <div class="mgap-match-card-body">${calcHtml}</div>
+      </div>
+      <div class="mgap-match-card" style="margin-bottom:.75rem">
+        <div class="mgap-match-card-head"><span class="mgap-match-card-title">💻 Код адаптации</span></div>
+        <div class="mgap-match-card-body">${escHtml(m.code_snippet || 'Нет кода')}</div>
+      </div>
+      <div class="mgap-verdict-dev">
+        <div class="mgap-verdict-label">👨‍💻 Для разработчика</div>
+        <div style="color:#e2e8f0">${escHtml(vDev.action||'—')}</div>
+        <div style="font-size:.72rem;color:#64748b;margin-top:.25rem">${escHtml(vDev.note||'')}</div>
+      </div>
+      <div class="mgap-verdict-biz">
+        <div class="mgap-verdict-label">💼 Для бизнеса</div>
+        <div style="color:#e2e8f0">${escHtml(vBiz.recommendation||'—')}</div>
+        <div style="font-size:.7rem;color:#4ade80;margin-top:.25rem">${escHtml(vBiz.estimated_roi||'')}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderMgapBatch(data) {
+  const panel  = document.getElementById('mgap-results-panel');
+  if (!panel) return;
+  const results = data.results || {};
+  const ids     = Object.keys(results);
+  if (!ids.length) { panel.innerHTML = '<div style="color:#475569;padding:1rem">Нет матчей с резонансом > порога.</div>'; return; }
+
+  panel.innerHTML = `<div style="font-size:.8rem;color:#64748b;margin-bottom:1rem">
+    Обработано ${ids.length} артефактов · Моделей в реестре: ${escHtml(data.models_count||0)}
+  </div>` + ids.map(artId => {
+    const matches = results[artId] || [];
+    const best    = matches[0] || {};
+    const rc      = _resColor(best.resonance || 0);
+    return `<div style="background:#1e293b;border-radius:10px;border-left:4px solid ${rc};padding:.65rem 1rem;margin-bottom:.5rem;cursor:pointer"
+      onclick="document.getElementById('mgap-artifact-id').value='${escHtml(artId)}';runMgapMatch()">
+      <div style="display:flex;align-items:center;gap:.6rem">
+        <span style="font-family:monospace;color:#fbbf24;font-size:.82rem">${escHtml(artId)}</span>
+        <span style="font-size:1rem;font-weight:700;color:${rc}">${((best.resonance||0)*100).toFixed(0)}%</span>
+        <span style="font-size:.78rem;color:#e2e8f0">${escHtml(best.model_id||'')} · ${escHtml(best.model_name||'')}</span>
+        <span style="font-size:.72rem;color:#64748b;margin-left:.3rem">[${escHtml(best.logia||'')}]</span>
+      </div>
+      <div style="font-size:.7rem;color:#64748b;margin-top:.2rem">
+        ${matches.map(m => `${escHtml(m.model_id||'')}(${((m.resonance||0)*100).toFixed(0)}%)`).join(' · ')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
 // ══════════════════════════════════════════════════════
 let ragTimer = null;
 document.addEventListener('DOMContentLoaded', () => {
@@ -1390,6 +1720,8 @@ function renderFourDMatrix(fd, jobId) {
   }
   document.getElementById('four-d-empty').style.display = 'none';
   document.getElementById('four-d-matrix-display').style.display = 'block';
+  const qsBtn = document.getElementById('four-d-quick-stress');
+  if (qsBtn) qsBtn.style.display = 'block';
 
   const s = fd.structure || {};
   const inf = fd.influence || {};
@@ -1467,19 +1799,33 @@ function renderMathCurrentResult(data) {
       const p = ins.probability ?? 0;
       const band = ins.confidence_band || 'low';
       const pColor = p>=0.7?'#4ade80':p>=0.5?'#f59e0b':'#ef4444';
-      html += `<div class="insight-item ${band}">
+      const rProto = ins.prototype_id || '';
+      const rClickStyle = rProto ? 'cursor:pointer' : '';
+      const rClickFn = rProto ? `onclick="viewArtifact('${rProto}.json','${rProto}')"` : '';
+      html += `<div class="insight-item ${band}" ${rClickFn} style="${rClickStyle}">
         <div style="display:flex;align-items:center;gap:.5rem">
           <span class="insight-prob" style="color:${pColor}">${(p*100).toFixed(0)}%</span>
           <span class="insight-domains">${escHtml(ins.source_domain + ' → ' + ins.target_domain)}</span>
           <span class="prob-badge ${band}" style="margin-left:auto">${band}</span>
         </div>
-        <div class="insight-meta">iso=${ins.iso_4d??'—'} · scale=${ins.scale_align??'—'}</div>
+        <div class="insight-meta">iso=${ins.iso_4d??'—'} · scale=${ins.scale_align??'—'}${rProto?' · <span style="font-family:monospace;color:#60a5fa;font-size:.65rem">'+rProto.substring(0,8)+'</span>':''}</div>
       </div>`;
     });
   }
 
   document.getElementById('math-current-body').innerHTML = html ||
     '<div style="color:#475569;font-size:.8rem">—</div>';
+}
+
+
+function quickStressFromLast() {
+  const artId = _currentArtifactId;
+  if (!artId) { alert('Нет текущего артефакта'); return; }
+  document.getElementById('stress-artifact-id').value = artId;
+  // Switch to math tab and run
+  const mathBtn = document.querySelectorAll('.tab-button')[6];
+  switchTab('math', mathBtn);
+  setTimeout(runStressTest, 150);
 }
 
 function openCurrentArtifact() {
@@ -1561,13 +1907,19 @@ async function loadInsights() {
       const pColor = p >= 0.7 ? '#4ade80' : p >= 0.5 ? '#f59e0b' : '#ef4444';
       const ts = ins.generated_at ? new Date(ins.generated_at).toLocaleString('ru-RU') : '';
       const createdAt = ins.generated_at || '';
-      return `<div class="insight-item ${band}" data-created="${createdAt}" style="display:none">
+      const protoId = ins.prototype_id || '';
+      const insClick = protoId ? `onclick="viewArtifact('${protoId}.json','${protoId}')"` : '';
+      return `<div class="insight-item ${band}" data-created="${createdAt}" ${insClick} style="display:none;${protoId?'cursor:pointer':''}">
         <div style="display:flex;align-items:center;gap:.5rem">
           <span class="insight-prob" style="color:${pColor}">${(p*100).toFixed(0)}%</span>
           <span class="insight-domains">${escHtml(ins.source_domain + ' → ' + ins.target_domain)}</span>
           <span class="prob-badge ${band}" style="margin-left:auto">${band}</span>
         </div>
-        <div style="font-size:.75rem;color:#94a3b8;margin-top:.2rem">iso=${ins.iso_4d??'—'} · proto=${(ins.prototype_id||'').substring(0,8)}</div>
+        <div style="font-size:.75rem;color:#94a3b8;margin-top:.2rem">
+          iso=${ins.iso_4d??'—'} · scale=${ins.scale_align??'—'}
+          ${protoId ? `· <span style="font-family:monospace;color:#60a5fa;font-size:.65rem;background:#1e3a5f;padding:.08rem .3rem;border-radius:3px">${protoId.substring(0,8)}</span>` : ''}
+          ${protoId ? '<span style="font-size:.62rem;color:#334155;margin-left:.2rem">↗ открыть</span>' : ''}
+        </div>
         <div class="insight-meta">${ts}</div>
       </div>`;
     }).join('');

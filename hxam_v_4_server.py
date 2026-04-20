@@ -23,6 +23,7 @@ from api_usage_tracker import tracker
 from response_normalizer import normalize_gen, normalize_ver, repairs_summary
 
 from math_core import MathCore
+from mgap_matcher import MGAPMatcher
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -51,6 +52,13 @@ question_gen = QuestionGenerator(space=semantic_space, graph=invariant_graph)
 logger.info("Инициализация MathCore...")
 math_core = MathCore(artifacts_dir="artifacts", four_d_index="artifacts/four_d_index.jsonl")
 logger.info("MathCore готов.")
+
+logger.info("Инициализация MGAPMatcher...")
+mgap_matcher = MGAPMatcher(
+    registry_path="mgap_registry.json",
+    artifacts_dir="artifacts",
+)
+logger.info(f"MGAPMatcher готов. Моделей в реестре: {len(mgap_matcher.registry)}")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1030,6 +1038,60 @@ def math_stats():
         except Exception:
             pass
     return stats
+
+
+@app.get("/mgap/match/{artifact_id}")
+def mgap_match(
+    artifact_id: str,
+    top_k: int = 3,
+    all_types: bool = False,
+    model_id: str = "",
+):
+    """
+    Поиск топ-K отраслевых моделей, резонирующих с артефактом.
+    """
+    try:
+        results = mgap_matcher.match_artifact(
+            artifact_id=artifact_id,
+            top_k=top_k,
+            math_type_only=not all_types,
+            model_id=model_id or None,
+        )
+        return {"artifact_id": artifact_id, "matches": results, "total": len(results)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/mgap/registry")
+def mgap_registry():
+    """Сводка моделей реестра MGAP."""
+    return {
+        "models": mgap_matcher.get_registry_summary(),
+        "total": len(mgap_matcher.registry),
+        "version": "v4.4",
+    }
+
+
+@app.post("/mgap/batch")
+def mgap_batch_endpoint(
+    top_k: int = 2,
+    all_types: bool = False,
+    min_resonance: float = 0.3,
+):
+    """Batch: прогнать все артефакты через MGAPMatcher."""
+    try:
+        results = mgap_matcher.match_batch(
+            top_k=top_k,
+            math_type_only=not all_types,
+            min_resonance=min_resonance,
+        )
+        return {
+            "results": results,
+            "artifacts_count": len(results),
+            "models_count": len(mgap_matcher.registry),
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 if __name__ == "__main__":
