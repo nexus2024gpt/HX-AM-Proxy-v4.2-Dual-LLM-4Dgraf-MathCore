@@ -438,7 +438,7 @@
           "typical_values": "0.1–0.5"
         }
       },
-      "blind_spot_template": "Стандартные метрики Gephi анализируют граф статично, не отслеживая динамический порог виральности K_c={eta_max} и критическое время закрепления τ_max={tau_max} дн: при превышении шума η_max={eta_max} мем затухает даже при высоком K.",
+      "blind_spot_template": "Стандартные метрики Gephi анализируют граф статично, не отслеживая критический уровень шума η_max={eta_max} и максимальное время закрепления τ_max={tau_max} дн: при превышении мем затухает даже при высоком K.",
       "math_adaptation_formula": "virality_forecast = 1 if (K > K_c and eta < eta_crit and tau < tau_crit) else 0; time_to_peak = tau * ln(1 / (1 - K))",
       "example_data": {
         "type": "kuramoto",

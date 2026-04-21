@@ -1057,7 +1057,25 @@ def mgap_match(
             math_type_only=not all_types,
             model_id=model_id or None,
         )
-        return {"artifact_id": artifact_id, "matches": results, "total": len(results)}
+        # Формируем ответ (такой же, как возвращался раньше)
+        response = {"artifact_id": artifact_id, "matches": results, "total": len(results)}
+        
+        # --- Сохранение в папку mgap_results ---
+        try:
+            # Убедимся, что папка существует (на случай, если её удалили)
+            os.makedirs("mgap_results", exist_ok=True)
+            # Имя файла: artifact_id + временная метка (сек)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"mgap_results/{artifact_id}_{timestamp}.json"
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(response, f, indent=2, ensure_ascii=False)
+            logging.info(f"MGAP result saved to {filename}")
+        except Exception as e:
+            # Ошибка сохранения не должна ломать ответ
+            logging.error(f"Failed to save MGAP result: {e}")
+        # --- Конец блока сохранения ---
+        
+        return response
     except Exception as e:
         raise HTTPException(500, str(e))
 

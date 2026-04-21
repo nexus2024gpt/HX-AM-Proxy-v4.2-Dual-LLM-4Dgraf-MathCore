@@ -92,24 +92,32 @@ def _extract_art_sim(artifact: Dict) -> Dict:
     return sim
 
 
-def _extract_thresholds(sim: Dict, ver: Dict) -> Dict:
+def _extract_thresholds(sim: Dict, ver: Dict, model: Dict) -> Dict:
     """
     Приоритет извлечения порогов:
     1) ver.stress_test (значения для переведённого домена)
-    2) simulation (результаты MathCore для исходного домена)
-    3) дефолт
+    2) critical_thresholds модели
+    3) simulation (результаты MathCore для исходного домена)
     """
     stress = ver.get("stress_test") or {}
-    eta_crit = (stress.get("eta_critical")
-                or sim.get("eta_critical")
-                or sim.get("bifurcation_boundary", {}).get("eta_max", 0.5))
-    tau_rob  = (stress.get("tau_robustness")
-                or sim.get("bifurcation_boundary", {}).get("tau_max_stable", 1.0))
+    # Приоритет 1: стресс-тест перевода
+    eta = stress.get("eta_critical")
+    tau = stress.get("tau_robustness")
+    # Приоритет 2: критические пороги модели
+    if eta is None:
+        eta = model.get("critical_thresholds", {}).get("eta_max")
+    if tau is None:
+        tau = model.get("critical_thresholds", {}).get("tau_max")
+    # Приоритет 3: симуляция артефакта
+    if eta is None:
+        eta = sim.get("eta_critical") or sim.get("bifurcation_boundary", {}).get("eta_max", 0.5)
+    if tau is None:
+        tau = sim.get("tau_robustness") or sim.get("bifurcation_boundary", {}).get("tau_max_stable", 1.0)
     return {
-        "eta_critical":     float(eta_crit),
-        "tau_robustness":   float(tau_rob),
-        "lyapunov_max":     float(sim.get("lyapunov_max",     0.0)),
-        "stability_score":  float(sim.get("stability_score",  0.5)),
+        "eta_critical": float(eta),
+        "tau_robustness": float(tau),
+        "lyapunov_max": float(sim.get("lyapunov_max", 0.0)),
+        "stability_score": float(sim.get("stability_score", 0.5)),
         "survival_verified": bool(sim.get("survival_verified", False)),
     }
 
@@ -183,7 +191,7 @@ def mgap_stability_monitor(
 def _code_kuramoto(model: Dict, thresholds: Dict, flat: Dict) -> str:
     eta_c = thresholds["eta_critical"]
     tau_c = thresholds["tau_robustness"]
-    K_c   = flat["K_c"]
+    K_c   = model.get("critical_thresholds", {}).get("K_min", flat["K_c"])
     prog  = model["programs"][0]
     return f"""\
 # MGAP Stability Monitor — {prog}
@@ -478,7 +486,6 @@ class MGAPMatcher:
         sim     = _extract_art_sim(artifact)
         ver     = artifact.get("data", {}).get("ver", {})
         flat    = _flat_4d(four_d)
-        thresholds = _extract_thresholds(sim, ver)
         art_math = _norm_math_type(flat["model"])
 
         art_vec = _art_vector(four_d)
@@ -508,6 +515,7 @@ class MGAPMatcher:
 
         results = []
         for resonance, model in top:
+            thresholds = _extract_thresholds(sim, ver, model)
             match = self._build_match(
                 artifact_id=artifact_id,
                 artifact=artifact,
