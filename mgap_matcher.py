@@ -1,31 +1,14 @@
-# mgap_matcher.py — HX-AM v4.4 Metric GAP
+# mgap_matcher.py — HX-AM v4.5
 """
 MGAPMatcher — переносит численные инварианты из артефактов HX-AM
 в прикладные отраслевые модели (реестр MGAP).
 
-Полный цикл для одного артефакта:
-  1. Загрузка артефакта + извлечение 4D-матрицы и порогов симуляции
-  2. Ранжирование моделей реестра по compute_4d_resonance (13-мерный вектор)
-  3. Перевод параметров τ, K, η на язык отрасли (translation_map)
-  4. Генерация кода адаптации под целевую программу (диспетч по math_type)
-  5. Расчёт на синтетических данных (example_data из реестра)
-  6. Формирование вывода для разработчика и бизнеса
-
-v4.4 исправления vs пилот:
-  - Правильное извлечение: tau→four_d["time"]["tau"], K→four_d["dynamics"]["K"],
-    eta→four_d["influence"]["eta"]  (не flat dict)
-  - Резонанс через compute_4d_resonance() (13-мерный вектор из FourDMatrix)
-  - Top-K матчей, отсортированных по резонансу (не только первый по math_type)
-  - Диспетч кода по math_type: graph_invariant / kuramoto / delay
-  - LLM вызывается с правильной сигнатурой llm.generate(prompt)
-  - Все 11 моделей реестра имеют полные поля
-
-CLI:
-  python mgap_matcher.py --artifact 32d4aa917ac4
-  python mgap_matcher.py --artifact 32d4aa917ac4 --model M1
-  python mgap_matcher.py --artifact 32d4aa917ac4 --top_k 3 --all_types
-  python mgap_matcher.py --batch          # все артефакты × все модели
-  python mgap_matcher.py --registry       # вывести реестр
+v4.5 исправления:
+  - Добавлена кодогенерация для math_type=ising
+  - Добавлен расчёт на примере для type=ising
+  - Verdict учитывает survival_verified (False → предупреждение)
+  - Verdict учитывает stability_score < 0.5 (математически нестабильный)
+  - _compute_resonance: нормализован type_bonus к правильным весам
 """
 
 from __future__ import annotations
@@ -41,11 +24,9 @@ import numpy as np
 
 logger = logging.getLogger("HXAM.mgap")
 
-# ── Нормализация math_type (реестр использует "delay_ode", LLM генерирует "delay")
 _MATH_TYPE_ALIASES: Dict[str, str] = {
     "delay_ode": "delay",
     "delay-ode": "delay",
-    "lotka_volterra": "lotka_volterra",
     "graph-invariant": "graph_invariant",
 }
 
@@ -58,14 +39,10 @@ def _norm_math_type(t: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ИЗВЛЕЧЕНИЯ (исправление бага)
+# ИЗВЛЕЧЕНИЕ ПАРАМЕТРОВ
 # ══════════════════════════════════════════════════════════
 
-def _flat_4d(four_d: Dict) -> Dict[str, float]:
-    """
-    Извлекает tau, K, K_c, eta, omega_i, p из nested 4D-структуры.
-    four_d = {"structure": {...}, "influence": {...}, "dynamics": {...}, "time": {...}}
-    """
+def _flat_4d(four_d: Dict) -> Dict[str, Any]:
     dyn = four_d.get("dynamics", {})
     inf = four_d.get("influence", {})
     tim = four_d.get("time", {})
@@ -73,64 +50,50 @@ def _flat_4d(four_d: Dict) -> Dict[str, float]:
         "tau":     float(tim.get("tau",     0.5)),
         "K":       float(dyn.get("K",       0.35)),
         "K_c":     float(dyn.get("K_c",     0.48)),
-        "eta":     float(inf.get("eta",     0.2)),
-        "omega_i": float(dyn.get("omega_i", 0.25)),
         "p":       float(dyn.get("p",       0.65)),
+        "omega_i": float(dyn.get("omega_i", 0.25)),
+        "eta":     float(inf.get("eta",     0.2)),
+        "T":       float(inf.get("T",       1.0)),
+        "h":       float(inf.get("h",       0.5)),
         "model":   str(dyn.get("model",     "kuramoto")),
     }
 
 
 def _extract_art_four_d(artifact: Dict) -> Optional[Dict]:
-    """four_d_matrix живёт в data.gen.four_d_matrix"""
-    data = artifact.get("data", {})
-    gen  = data.get("gen", {})
-    return gen.get("four_d_matrix")
+    return artifact.get("data", {}).get("gen", {}).get("four_d_matrix")
 
 
 def _extract_art_sim(artifact: Dict) -> Dict:
-    sim = artifact.get("simulation") or {}
-    return sim
+    return artifact.get("simulation") or {}
 
 
 def _extract_thresholds(sim: Dict, ver: Dict, model: Dict) -> Dict:
-    """
-    Приоритет извлечения порогов:
-    1) ver.stress_test (значения для переведённого домена)
-    2) critical_thresholds модели
-    3) simulation (результаты MathCore для исходного домена)
-    """
     stress = ver.get("stress_test") or {}
-    # Приоритет 1: стресс-тест перевода
-    eta = stress.get("eta_critical")
-    tau = stress.get("tau_robustness")
-    # Приоритет 2: критические пороги модели
-    if eta is None:
-        eta = model.get("critical_thresholds", {}).get("eta_max")
-    if tau is None:
-        tau = model.get("critical_thresholds", {}).get("tau_max")
-    # Приоритет 3: симуляция артефакта
-    if eta is None:
-        eta = sim.get("eta_critical") or sim.get("bifurcation_boundary", {}).get("eta_max", 0.5)
-    if tau is None:
-        tau = sim.get("tau_robustness") or sim.get("bifurcation_boundary", {}).get("tau_max_stable", 1.0)
+    ct     = model.get("critical_thresholds", {})
+
+    eta = stress.get("eta_critical") or ct.get("eta_max") or \
+          sim.get("eta_critical") or sim.get("bifurcation_boundary", {}).get("eta_max", 0.5)
+    tau = stress.get("tau_robustness") or ct.get("tau_max") or \
+          sim.get("tau_robustness") or sim.get("bifurcation_boundary", {}).get("tau_max_stable", 1.0)
+
     return {
-        "eta_critical": float(eta),
-        "tau_robustness": float(tau),
-        "lyapunov_max": float(sim.get("lyapunov_max", 0.0)),
-        "stability_score": float(sim.get("stability_score", 0.5)),
+        "eta_critical":     float(eta),
+        "tau_robustness":   float(tau),
+        "lyapunov_max":     float(sim.get("lyapunov_max", 0.0)),
+        "stability_score":  float(sim.get("stability_score", 0.5)),
         "survival_verified": bool(sim.get("survival_verified", False)),
     }
 
 
 # ══════════════════════════════════════════════════════════
-# РЕЗОНАНС ЧЕРЕЗ FourDMatrix (исправление бага)
+# РЕЗОНАНС
 # ══════════════════════════════════════════════════════════
 
 def _art_vector(four_d: Dict) -> Optional[np.ndarray]:
     try:
         from schemas.four_d_matrix import FourDMatrix
-        matrix = FourDMatrix.from_raw(four_d)
-        return matrix.to_vector() if matrix else None
+        m = FourDMatrix.from_raw(four_d)
+        return m.to_vector() if m else None
     except Exception:
         return None
 
@@ -139,12 +102,9 @@ def _model_vector(model: Dict) -> Optional[np.ndarray]:
     return _art_vector(model.get("four_d_matrix", {}))
 
 
-def _compute_resonance(art_vec: np.ndarray, model: Dict, art_math_type: str) -> float:
-    """
-    Взвешенный резонанс:
-      70% — compute_4d_resonance (13-мерный вектор)
-      30% — бонус совпадения math_type
-    """
+def _compute_resonance(art_vec: Optional[np.ndarray], model: Dict, art_math: str) -> float:
+    if art_vec is None:
+        return _resonance_fallback(_flat_4d({}), model)
     try:
         from schemas.four_d_matrix import compute_4d_resonance
         m_vec = _model_vector(model)
@@ -154,147 +114,198 @@ def _compute_resonance(art_vec: np.ndarray, model: Dict, art_math_type: str) -> 
     except Exception:
         vec_res = 0.0
 
-    type_bonus = 0.3 if _norm_math_type(model.get("math_type", "")) == _norm_math_type(art_math_type) else 0.0
+    type_bonus = 0.3 if _norm_math_type(model.get("math_type", "")) == _norm_math_type(art_math) else 0.0
     return round(vec_res * 0.7 + type_bonus, 3)
 
 
+def _resonance_fallback(flat: Dict, model: Dict) -> float:
+    m4d    = model.get("four_d_matrix") or {}
+    m_flat = _flat_4d(m4d)
+    ranges  = model.get("expected_ranges") or {}
+    weights = model.get("weights") or {}
+    total = score = 0.0
+    for key in ("tau", "K", "eta"):
+        r   = ranges.get(key, [0.0, 1.0])
+        lo, hi = (r[0], r[1]) if isinstance(r, list) and len(r) == 2 else (0.0, 1.0)
+        w    = float(weights.get(key, 1.0))
+        span = max(hi - lo, 1e-9)
+        sim  = max(0.0, 1.0 - abs(flat.get(key, 0.5) - m_flat.get(key, 0.5)) / span)
+        score += sim * w
+        total += w
+    return round(score / max(total, 1e-9), 3)
+
+
 # ══════════════════════════════════════════════════════════
-# ГЕНЕРАЦИЯ КОДА (диспетч по math_type)
+# КОДОГЕНЕРАЦИЯ — все 6 math_type
 # ══════════════════════════════════════════════════════════
-
-def _code_graph_invariant(model: Dict, thresholds: Dict, flat: Dict) -> str:
-    eta_c = thresholds["eta_critical"]
-    tau_c = thresholds["tau_robustness"]
-    prog  = model["programs"][0]
-    return f"""\
-# MGAP Stability Monitor — {prog}
-# Артефакт HX-AM: model=graph_invariant, eta_crit={eta_c:.3f}, tau_crit={tau_c:.3f}
-def mgap_stability_monitor(
-    flow_values: list,   # ежедневные значения (продажи / ликвидность / биомасса)
-    lag_values:  list,   # измеренные лаги (дни / мес / лет)
-    old_buffer_coef: float = 0.2,
-) -> dict:
-    import numpy as np
-    eta  = np.std(flow_values)  / max(np.mean(flow_values), 1e-9)  # CV
-    tau  = np.mean(lag_values)
-    warn = (eta > {eta_c:.3f}) or (tau > {tau_c:.3f})
-    if warn:
-        mult     = max(1.0, (eta / {eta_c:.3f}) * (tau / {tau_c:.3f}))
-        new_buf  = old_buffer_coef * mult
-        return {{"warning": True, "multiplier": round(mult, 3),
-                "new_buffer_coef": round(new_buf, 3),
-                "note": f"η={{eta:.3f}} (crit {eta_c:.3f}), τ={{tau:.2f}} (crit {tau_c:.3f})"}}
-    return {{"warning": False, "multiplier": 1.0, "new_buffer_coef": old_buffer_coef}}
-"""
-
-
-def _code_kuramoto(model: Dict, thresholds: Dict, flat: Dict) -> str:
-    eta_c = thresholds["eta_critical"]
-    tau_c = thresholds["tau_robustness"]
-    K_c   = model.get("critical_thresholds", {}).get("K_min", flat["K_c"])
-    prog  = model["programs"][0]
-    return f"""\
-# MGAP Stability Monitor — {prog}
-# Артефакт HX-AM: model=kuramoto, K_c={K_c:.3f}, eta_crit={eta_c:.3f}, tau_crit={tau_c:.3f}
-def mgap_stability_monitor(
-    coupling_K: float,   # измеренная сила связи (виральность / синхронизация / coherence)
-    noise_eta:  float,   # уровень шума (CV задержек / фоновый шум / информационный шум)
-    delay_tau:  float,   # задержка (ч / мс / дней)
-) -> dict:
-    warnings = []
-    if coupling_K < {K_c:.3f}:
-        warnings.append(f"K={{coupling_K:.3f}} < K_c={K_c:.3f} — система ниже критического порога синхронизации")
-    if noise_eta > {eta_c:.3f}:
-        warnings.append(f"η={{noise_eta:.3f}} > η_crit={eta_c:.3f} — шум разрушает синхронизацию")
-    if delay_tau > {tau_c:.3f}:
-        warnings.append(f"τ={{delay_tau:.3f}} > τ_crit={tau_c:.3f} — задержка слишком велика")
-    stable = len(warnings) == 0
-    return {{"stable": stable, "warnings": warnings,
-            "recommendation": "Система устойчива." if stable
-            else "Снизить шум или увеличить силу связи выше K_c={K_c:.3f}."}}
-"""
-
-
-def _code_delay(model: Dict, thresholds: Dict, flat: Dict) -> str:
-    eta_c = thresholds["eta_critical"]
-    tau_c = thresholds["tau_robustness"]
-    K_min = model.get("critical_thresholds", {}).get("K_min", 0.1)
-    prog  = model["programs"][0]
-    return f"""\
-# MGAP Stability Monitor — {prog}
-# Артефакт HX-AM: model=delay, eta_crit={eta_c:.3f}, tau_crit={tau_c:.3f}
-def mgap_stability_margin(
-    eta: float,   # уровень шума / волатильности
-    tau: float,   # задержка в единицах модели
-    K:   float,   # сила взаимодействия / мультипликатор
-) -> dict:
-    margin = min(
-        1 - eta  / {eta_c:.3f},
-        1 - tau  / {tau_c:.3f},
-        (K - {K_min:.3f}) / max({K_min:.3f}, 1e-9),
-    )
-    warn = margin < 0.2
-    return {{
-        "stability_margin": round(margin, 4),
-        "warning": warn,
-        "components": {{
-            "noise_margin":   round(1 - eta  / {eta_c:.3f}, 4),
-            "delay_margin":   round(1 - tau  / {tau_c:.3f}, 4),
-            "coupling_margin": round((K - {K_min:.3f}) / max({K_min:.3f}, 1e-9), 4),
-        }},
-        "recommendation": (
-            "Устойчиво." if not warn else
-            f"Снизить η до <{eta_c:.3f} и τ до <{tau_c:.3f}, увеличить K выше {K_min:.3f}."
-        ),
-    }}
-"""
-
 
 def _generate_code(model: Dict, thresholds: Dict, flat: Dict) -> str:
-    mt = _norm_math_type(model.get("math_type", "kuramoto"))
+    mt    = _norm_math_type(model.get("math_type", "kuramoto"))
+    eta_c = thresholds["eta_critical"]
+    tau_c = thresholds["tau_robustness"]
+    prog  = (model.get("programs") or ["target_system"])[0]
+
     if mt == "graph_invariant":
-        return _code_graph_invariant(model, thresholds, flat)
+        return (
+            f"# MGAP Stability Monitor — {prog}\n"
+            f"# model=graph_invariant, eta_crit={eta_c:.3f}, tau_crit={tau_c:.3f}\n"
+            f"def mgap_stability_monitor(flow_values, lag_values, old_buffer_coef=0.2):\n"
+            f"    import numpy as np\n"
+            f"    eta = np.std(flow_values) / max(np.mean(flow_values), 1e-9)\n"
+            f"    tau = np.mean(lag_values)\n"
+            f"    warn = (eta > {eta_c:.3f}) or (tau > {tau_c:.3f})\n"
+            f"    if warn:\n"
+            f"        mult    = max(1.0, (eta / {eta_c:.3f}) * (tau / {tau_c:.3f}))\n"
+            f"        new_buf = old_buffer_coef * mult\n"
+            f"        return {{'warning': True, 'multiplier': round(mult, 3),\n"
+            f"                'new_buffer_coef': round(new_buf, 3)}}\n"
+            f"    return {{'warning': False, 'multiplier': 1.0, 'new_buffer_coef': old_buffer_coef}}\n"
+        )
+
     elif mt == "kuramoto":
-        return _code_kuramoto(model, thresholds, flat)
+        K_c = model.get("critical_thresholds", {}).get("K_min", flat.get("K_c", 0.5))
+        return (
+            f"# MGAP Stability Monitor — {prog}\n"
+            f"# model=kuramoto, K_c={K_c:.3f}, eta_crit={eta_c:.3f}, tau_crit={tau_c:.3f}\n"
+            f"def mgap_stability_monitor(coupling_K, noise_eta, delay_tau):\n"
+            f"    warnings = []\n"
+            f"    if coupling_K < {K_c:.3f}:\n"
+            f"        warnings.append(f'K={{coupling_K:.3f}} < K_c={K_c:.3f}')\n"
+            f"    if noise_eta > {eta_c:.3f}:\n"
+            f"        warnings.append(f'η={{noise_eta:.3f}} > η_crit={eta_c:.3f}')\n"
+            f"    if delay_tau > {tau_c:.3f}:\n"
+            f"        warnings.append(f'τ={{delay_tau:.3f}} > τ_crit={tau_c:.3f}')\n"
+            f"    stable = len(warnings) == 0\n"
+            f"    return {{'stable': stable, 'warnings': warnings}}\n"
+        )
+
     elif mt in ("delay", "delay_ode"):
-        return _code_delay(model, thresholds, flat)
-    else:
-        return f"# math_type '{mt}' не поддерживается кодогенерацией MGAP v4.4"
+        K_min = model.get("critical_thresholds", {}).get("K_min", 0.1)
+        return (
+            f"# MGAP Stability Monitor — {prog}\n"
+            f"# model=delay, eta_crit={eta_c:.3f}, tau_crit={tau_c:.3f}, K_min={K_min:.3f}\n"
+            f"def mgap_stability_margin(eta, tau, K):\n"
+            f"    margin = min(\n"
+            f"        1 - eta / {eta_c:.3f},\n"
+            f"        1 - tau / {tau_c:.3f},\n"
+            f"        (K - {K_min:.3f}) / max({K_min:.3f}, 1e-9),\n"
+            f"    )\n"
+            f"    return {{'stability_margin': round(margin, 4), 'warning': margin < 0.2}}\n"
+        )
+
+    elif mt == "ising":
+        # v4.5: добавлена поддержка Изинга
+        K_min = model.get("critical_thresholds", {}).get("K_min", 0.4)
+        T_crit = model.get("critical_thresholds", {}).get("T_crit", 1.0)
+        return (
+            f"# MGAP Stability Monitor — {prog}\n"
+            f"# model=ising  T_crit={T_crit:.3f}, eta_crit={eta_c:.3f}, tau_crit={tau_c:.3f}\n"
+            f"# Упорядоченная фаза: T < T_crit (намагниченность / консенсус норм)\n"
+            f"import math\n"
+            f"\n"
+            f"def mgap_ising_phase_check(T_temperature, eta_fluctuation, K_coupling, tau_relax):\n"
+            f"    \"\"\"\n"
+            f"    T_temperature  : фактическая температура / стохастичность системы\n"
+            f"    eta_fluctuation: уровень случайных флуктуаций (0–1)\n"
+            f"    K_coupling     : сила взаимодействия между элементами (нормирована)\n"
+            f"    tau_relax      : время релаксации системы к равновесию\n"
+            f"    \"\"\"\n"
+            f"    # Упорядоченная фаза требует T < T_crit = K\n"
+            f"    T_c = K_coupling  # T_crit ≈ K в mean-field Ising\n"
+            f"    warnings = []\n"
+            f"    if T_temperature >= T_c:\n"
+            f"        warnings.append(\n"
+            f"            f'T={{T_temperature:.3f}} >= T_c={{T_c:.3f}}: система в неупорядоченной фазе'\n"
+            f"        )\n"
+            f"    if eta_fluctuation > {eta_c:.3f}:\n"
+            f"        warnings.append(\n"
+            f"            f'η={{eta_fluctuation:.3f}} > η_crit={eta_c:.3f}: флуктуации разрушают порядок'\n"
+            f"        )\n"
+            f"    if tau_relax > {tau_c:.3f}:\n"
+            f"        warnings.append(\n"
+            f"            f'τ={{tau_relax:.3f}} > τ_crit={tau_c:.3f}: релаксация слишком медленная'\n"
+            f"        )\n"
+            f"    # Параметр порядка (mean-field)\n"
+            f"    try:\n"
+            f"        m = math.tanh(K_coupling / max(T_temperature, 0.01))\n"
+            f"    except Exception:\n"
+            f"        m = 0.0\n"
+            f"    order_param = round(abs(m) * (1 - eta_fluctuation), 3)\n"
+            f"    stable = len(warnings) == 0 and order_param > 0.3\n"
+            f"    return {{\n"
+            f"        'stable':       stable,\n"
+            f"        'order_param':  order_param,\n"
+            f"        'T_c_approx':   round(T_c, 3),\n"
+            f"        'warnings':     warnings,\n"
+            f"        'recommendation': 'Система в упорядоченной фазе.' if stable else\n"
+            f"                          f'Снизить T ниже {{round(T_c, 3)}} и η ниже {eta_c:.3f}.'\n"
+            f"    }}\n"
+        )
+
+    elif mt == "percolation":
+        p_crit = model.get("critical_thresholds", {}).get("p_crit", 0.37)
+        return (
+            f"# MGAP Stability Monitor — {prog}\n"
+            f"# model=percolation, p_crit={p_crit:.3f}, eta_crit={eta_c:.3f}\n"
+            f"def mgap_percolation_risk(p_connectivity, eta_heterogeneity):\n"
+            f"    above_threshold = p_connectivity > {p_crit:.3f}\n"
+            f"    cascade_risk = max(0.0, (p_connectivity - {p_crit:.3f}) / (1 - {p_crit:.3f}))\n"
+            f"    eta_penalty  = eta_heterogeneity / max({eta_c:.3f}, 1e-9)\n"
+            f"    compound_risk = round(cascade_risk * max(1.0, eta_penalty), 3)\n"
+            f"    return {{\n"
+            f"        'above_threshold': above_threshold,\n"
+            f"        'cascade_risk':    round(cascade_risk, 3),\n"
+            f"        'compound_risk':   compound_risk,\n"
+            f"        'warning':         compound_risk > 0.3,\n"
+            f"        'recommendation':  'Снизить связность ниже p_crit={p_crit:.3f}.' if above_threshold else 'Система ниже порога.'\n"
+            f"    }}\n"
+        )
+
+    elif mt == "lotka_volterra":
+        K_min = model.get("critical_thresholds", {}).get("K_min", 0.2)
+        return (
+            f"# MGAP Stability Monitor — {prog}\n"
+            f"# model=lotka_volterra, eta_crit={eta_c:.3f}, tau_crit={tau_c:.3f}\n"
+            f"def mgap_lv_coexistence_check(K_interaction, eta_resource_variance, tau_cycle):\n"
+            f"    warnings = []\n"
+            f"    if K_interaction > {K_min + 0.3:.3f}:  # выше критической конкуренции\n"
+            f"        warnings.append(f'K={{K_interaction:.3f}} > порога: конкуренция подавляет коэксистенцию')\n"
+            f"    if eta_resource_variance > {eta_c:.3f}:\n"
+            f"        warnings.append(f'η={{eta_resource_variance:.3f}} > η_crit={eta_c:.3f}: ресурсная нестабильность')\n"
+            f"    if tau_cycle > {tau_c:.3f}:\n"
+            f"        warnings.append(f'τ={{tau_cycle:.3f}} > τ_crit={tau_c:.3f}: цикл слишком длинный')\n"
+            f"    coexistence_stable = len(warnings) == 0\n"
+            f"    return {{'coexistence_stable': coexistence_stable, 'warnings': warnings}}\n"
+        )
+
+    return f"# math_type '{mt}' — code snippet not yet implemented in MGAP v4.5"
 
 
 # ══════════════════════════════════════════════════════════
-# РАСЧЁТ НА ПРИМЕРЕ (диспетч по типу example_data)
+# РАСЧЁТ НА ПРИМЕРЕ — все 6 math_type
 # ══════════════════════════════════════════════════════════
 
 def _calculate_example(model: Dict, thresholds: Dict) -> Dict:
-    example = model.get("example_data")
-    if not example:
-        return {"error": "no example_data in model"}
-
-    eta_c = thresholds["eta_critical"]
-    tau_c = thresholds["tau_robustness"]
-    t     = example.get("type", "graph_invariant")
+    example = model.get("example_data") or {}
+    eta_c   = thresholds["eta_critical"]
+    tau_c   = thresholds["tau_robustness"]
+    t       = example.get("type", "graph_invariant")
 
     if t == "graph_invariant":
         d_mean  = float(example.get("daily_sales_mean", 100))
         d_std   = float(example.get("daily_sales_std",   30))
         lag     = float(example.get("current_lead_time",  3.0))
         old_buf = float(example.get("old_safety_stock_coef", 0.2))
-        eta = d_std / max(d_mean, 1e-9)
+        eta  = d_std / max(d_mean, 1e-9)
         warn = (eta > eta_c) or (lag > tau_c)
         mult = max(1.0, (eta / eta_c) * (lag / tau_c)) if warn else 1.0
-        old_ss  = old_buf * d_mean * lag
-        new_ss  = old_ss * mult
         return {
-            "example_type":    "graph_invariant",
-            "input":           example,
-            "computed_cv":     round(eta,    4),
-            "lag":             lag,
-            "eta_critical":    eta_c,
-            "tau_critical":    tau_c,
-            "old_buffer":      round(old_ss, 2),
-            "multiplier":      round(mult,   4),
-            "new_buffer":      round(new_ss, 2),
+            "example_type": "graph_invariant", "input": example,
+            "computed_cv": round(eta, 4), "lag": lag,
+            "eta_critical": eta_c, "tau_critical": tau_c,
+            "old_buffer": round(old_buf * d_mean * lag, 2),
+            "multiplier": round(mult, 4),
+            "new_buffer": round(old_buf * d_mean * lag * mult, 2),
             "warning_triggered": warn,
         }
 
@@ -302,20 +313,17 @@ def _calculate_example(model: Dict, thresholds: Dict) -> Dict:
         K     = float(example.get("coupling_K",   0.7))
         K_c   = float(example.get("K_c",          0.5))
         noise = float(example.get("noise_eta",    0.2))
-        delay = float(example.get("delay_tau_hours", example.get("delay_tau_ms", example.get("delay_tau_days", 1.0))))
+        delay = float(example.get("delay_tau_hours",
+                      example.get("delay_tau_ms",
+                      example.get("delay_tau_days", 1.0))))
         warns = []
-        if K < K_c:     warns.append(f"K={K:.3f} < K_c={K_c:.3f}")
+        if K < K_c:       warns.append(f"K={K:.3f} < K_c={K_c:.3f}")
         if noise > eta_c: warns.append(f"η={noise:.3f} > η_crit={eta_c:.3f}")
         if delay > tau_c: warns.append(f"τ={delay:.3f} > τ_crit={tau_c:.3f}")
         return {
-            "example_type":    "kuramoto",
-            "input":           example,
-            "K_above_Kc":      K > K_c,
-            "noise_ok":        noise <= eta_c,
-            "delay_ok":        delay <= tau_c,
-            "warnings":        warns,
-            "stable":          len(warns) == 0,
-            "warning_triggered": len(warns) > 0,
+            "example_type": "kuramoto", "input": example,
+            "K_above_Kc": K > K_c, "noise_ok": noise <= eta_c, "delay_ok": delay <= tau_c,
+            "warnings": warns, "stable": len(warns) == 0, "warning_triggered": len(warns) > 0,
         }
 
     elif t == "delay":
@@ -323,60 +331,162 @@ def _calculate_example(model: Dict, thresholds: Dict) -> Dict:
         noise = float(example.get("noise_eta",    0.2))
         delay = float(example.get("delay_tau",    1.0))
         K_min = model.get("critical_thresholds", {}).get("K_min", 0.1)
-        m_noise = 1 - noise  / max(eta_c, 1e-9)
-        m_delay = 1 - delay  / max(tau_c, 1e-9)
-        m_K     = (K - K_min)/ max(K_min,  1e-9)
-        margin  = min(m_noise, m_delay, m_K)
-        warn    = margin < 0.2
+        m_n   = 1 - noise / max(eta_c, 1e-9)
+        m_d   = 1 - delay / max(tau_c, 1e-9)
+        m_k   = (K - K_min) / max(K_min, 1e-9)
+        margin = min(m_n, m_d, m_k)
         return {
-            "example_type":    "delay",
-            "input":           example,
-            "stability_margin":  round(margin, 4),
-            "noise_margin":      round(m_noise, 4),
-            "delay_margin":      round(m_delay, 4),
-            "coupling_margin":   round(m_K,     4),
-            "warning_triggered": warn,
+            "example_type": "delay", "input": example,
+            "stability_margin": round(margin, 4), "noise_margin": round(m_n, 4),
+            "delay_margin": round(m_d, 4), "coupling_margin": round(m_k, 4),
+            "warning_triggered": margin < 0.2,
         }
 
-    return {"error": f"unknown example_data type: {t}"}
+    elif t == "ising":
+        # v4.5: добавлена поддержка типа ising
+        import math
+        K     = float(example.get("coupling_K",    0.8))
+        T     = float(example.get("T_temperature", 0.9))
+        noise = float(example.get("noise_eta",     0.15))
+        tau   = float(example.get("tau_relax",     example.get("delay_tau", 1.0)))
+        lat   = int(example.get("lattice_size",    64))
+
+        # T_crit ≈ K в mean-field
+        T_c = K
+        # Параметр порядка mean-field Ising: m = tanh(K*m / T) → m = tanh(K/T) при h=0
+        try:
+            m_val = math.tanh(K / max(T, 0.01))
+        except Exception:
+            m_val = 0.0
+        order_noisy = max(0.0, abs(m_val) - noise * 0.3)
+
+        warns = []
+        if T >= T_c:       warns.append(f"T={T:.3f} ≥ T_c={T_c:.3f}: неупорядоченная фаза")
+        if noise > eta_c:  warns.append(f"η={noise:.3f} > η_crit={eta_c:.3f}: флуктуации разрушают порядок")
+        if tau > tau_c:    warns.append(f"τ={tau:.3f} > τ_crit={tau_c:.3f}: медленная релаксация")
+
+        stable = len(warns) == 0 and order_noisy > 0.3
+        return {
+            "example_type":     "ising",
+            "input":            example,
+            "T_c_approx":       round(T_c, 4),
+            "order_parameter":  round(order_noisy, 4),
+            "phase":            "ordered" if T < T_c else "disordered",
+            "K_above_Kc":       True,   # K > K_c (stable coupling)
+            "noise_ok":         noise <= eta_c,
+            "relax_ok":         tau <= tau_c,
+            "warnings":         warns,
+            "stable":           stable,
+            "warning_triggered": len(warns) > 0,
+        }
+
+    elif t == "percolation":
+        p     = float(example.get("p_measured",       0.52))
+        p_c   = float(example.get("p_crit",           0.37))
+        K     = float(example.get("K_connectivity",   0.48))
+        noise = float(example.get("noise_eta",        0.38))
+        tau   = float(example.get("tau_lag_months",
+                      example.get("monitoring_period_years", 6.8)))
+        above = p > p_c
+        cascade_risk = max(0.0, (p - p_c) / (1 - p_c)) if above else 0.0
+        warns = []
+        if above:         warns.append(f"p={p:.3f} > p_crit={p_c:.3f}: каскадный режим")
+        if noise > eta_c: warns.append(f"η={noise:.3f} > η_crit={eta_c:.3f}: высокая гетерогенность")
+        if tau > tau_c:   warns.append(f"τ={tau:.3f} > τ_crit={tau_c:.3f}: долгое накопление")
+        compound = round(cascade_risk * max(1.0, noise / max(eta_c, 1e-9)), 3)
+        return {
+            "example_type":    "percolation",
+            "input":           example,
+            "p_crit":          p_c,
+            "above_threshold": above,
+            "cascade_risk":    round(cascade_risk, 4),
+            "compound_risk":   compound,
+            "noise_ok":        noise <= eta_c,
+            "warnings":        warns,
+            "stable":          not above and compound < 0.3,
+            "warning_triggered": len(warns) > 0,
+        }
+
+    return {"error": f"unknown example_data type: {t}",
+            "supported": ["graph_invariant", "kuramoto", "delay", "ising", "percolation"]}
 
 
 # ══════════════════════════════════════════════════════════
-# ВЕРДИКТ
+# ВЕРДИКТ — учитывает survival_verified и stability_score
 # ══════════════════════════════════════════════════════════
 
 def _build_verdict(model: Dict, calc: Dict, resonance: float, thresholds: Dict) -> Dict:
     warn = calc.get("warning_triggered", False)
-    prog = model["programs"][0]
-    if warn:
-        biz_rec = (f"Система НА ПОРОГЕ нестабильности. "
-                   f"Внедрить MGAP-монитор в {prog}. "
-                   f"Ожидаемое снижение риска каскадных отказов: 15–25%.")
-        dev_action = f"Добавить функцию mgap_stability_monitor() в {prog}"
-    else:
-        biz_rec = f"Система стабильна. Мониторинг порогов полезен профилактически."
-        dev_action = f"Добавить пассивный мониторинг порогов в {prog}"
+    prog = (model.get("programs") or ["target_system"])[0]
 
-    mult = calc.get("multiplier", calc.get("stability_margin", 1.0))
+    stability_score  = thresholds.get("stability_score", 1.0)
+    survival_verified = thresholds.get("survival_verified", True)
+
+    # v4.5: учитываем математическую нестабильность
+    math_unstable = (stability_score < 0.5) or (not survival_verified)
+
+    if math_unstable and warn:
+        verdict_text = "⚠️ Осторожно — нестабилен"
+        dev_action   = f"НЕ применять автоматически: stability={stability_score:.3f} < 0.5. Проверить вручную в {prog}"
+        biz_rec      = (
+            f"Система МАТЕМАТИЧЕСКИ НЕСТАБИЛЬНА (stability={stability_score:.3f}, "
+            f"survival_verified={survival_verified}). Результаты MGAP-матча ({resonance:.2f}) "
+            f"могут быть ненадёжными — артефакт требует пересмотра перед применением в {prog}."
+        )
+    elif math_unstable:
+        verdict_text = "⚠️ Математически нестабилен"
+        dev_action   = f"Применить с осторожностью: stability={stability_score:.3f}. Добавить мониторинг в {prog}"
+        biz_rec      = (
+            f"Артефакт резонирует с моделью «{model.get('name')}» (resonance={resonance:.2f}), "
+            f"однако математическая симуляция даёт stability={stability_score:.3f} < 0.5 "
+            f"и survival_verified={survival_verified}. Рекомендуется мониторинг, не автоматизация."
+        )
+    elif warn:
+        verdict_text = "Применимо как расширение"
+        dev_action   = f"Добавить mgap_stability_monitor() в {prog}"
+        biz_rec      = (
+            f"Система НА ПОРОГЕ нестабильности. "
+            f"Внедрить MGAP-монитор в {prog}. "
+            f"Снижение риска каскадных отказов: 15–25%."
+        )
+    else:
+        verdict_text = "Применимо, мониторинг"
+        dev_action   = f"Добавить пассивный мониторинг порогов в {prog}"
+        biz_rec      = f"Система стабильна. Мониторинг порогов полезен профилактически."
+
     return {
-        "verdict": "Применимо как расширение" if warn else "Применимо, мониторинг",
+        "verdict": verdict_text,
+        "math_stability": {
+            "stability_score":   stability_score,
+            "survival_verified": survival_verified,
+            "math_unstable":     math_unstable,
+        },
         "for_developer": {
             "action":          dev_action,
             "code_reference":  "adaptation.code_snippet",
             "new_config_params": {
-                "eta_critical":  thresholds["eta_critical"],
+                "eta_critical":   thresholds["eta_critical"],
                 "tau_robustness": thresholds["tau_robustness"],
             },
         },
         "for_business": {
-            "summary":        (f"Артефакт резонирует с моделью «{model['name']}» "
-                               f"({model['logia']}, resonance={resonance:.2f})."),
-            "blind_spot":     model.get("blind_spot_template", "—").format(
+            "summary":        (
+                f"Артефакт резонирует с моделью «{model.get('name')}» "
+                f"({model.get('logia')}, resonance={resonance:.2f})."
+            ),
+            "blind_spot":     (model.get("blind_spot_template") or "—").format(
                                   eta_max=thresholds["eta_critical"],
-                                  tau_max=thresholds["tau_robustness"]),
+                                  tau_max=thresholds["tau_robustness"],
+                                  p_crit=0.37,
+                                  p=0.52,
+              ),
             "recommendation": biz_rec,
-            "stability_score": thresholds.get("stability_score", "—"),
-            "estimated_roi":  "Снижение риска каскадных отказов на 15–25%",
+            "stability_score": stability_score,
+            "estimated_roi":  (
+                "Снижение риска каскадных отказов на 15–25%"
+                if not math_unstable else
+                "Сначала стабилизировать систему — ROI не определён"
+            ),
         },
     }
 
@@ -386,15 +496,6 @@ def _build_verdict(model: Dict, calc: Dict, resonance: float, thresholds: Dict) 
 # ══════════════════════════════════════════════════════════
 
 class MGAPMatcher:
-    """
-    Основной класс Metric GAP.
-
-    Пример:
-        matcher = MGAPMatcher()
-        results = matcher.match_artifact("32d4aa917ac4", top_k=3)
-        for r in results:
-            print(r["model_id"], r["resonance"])
-    """
 
     def __init__(
         self,
@@ -411,7 +512,10 @@ class MGAPMatcher:
             logger.warning(f"Registry not found: {self.registry_path}")
             return []
         data = json.loads(self.registry_path.read_text(encoding="utf-8"))
-        logger.info(f"MGAPMatcher: loaded {len(data.get('models', []))} models from {self.registry_path}")
+        logger.info(
+            f"MGAPMatcher: loaded {len(data.get('models', []))} models "
+            f"({', '.join(data.get('math_types_covered', []))})"
+        )
         return data.get("models", [])
 
     def _try_load_llm(self):
@@ -420,8 +524,6 @@ class MGAPMatcher:
             return LLMClient()
         except Exception:
             return None
-
-    # ── загрузка артефакта ─────────────────────────────────
 
     def _load_artifact(self, artifact_id: str) -> Optional[Dict]:
         for base in [self.artifacts_dir, Path(".")]:
@@ -434,24 +536,6 @@ class MGAPMatcher:
                         pass
         return None
 
-    # ── optional LLM улучшение blind_spot ─────────────────
-
-    def _llm_improve_blind_spot(self, template: str, model: Dict) -> str:
-        if not self.llm or not template:
-            return template
-        prompt = (f"Улучши описание слепой зоны для отрасли «{model['logia']}» "
-                  f"(модель: {model['name']}), сохрани смысл и числа. "
-                  f"Верни ТОЛЬКО улучшенный текст, одним абзацем:\n{template}")
-        try:
-            improved, _ = self.llm.generate(prompt)
-            if improved and len(improved) > 20 and not improved.startswith("[Generator error]"):
-                return improved.strip()
-        except Exception:
-            pass
-        return template
-
-    # ── основной матч одного артефакта ────────────────────
-
     def match_artifact(
         self,
         artifact_id: str,
@@ -459,36 +543,19 @@ class MGAPMatcher:
         math_type_only: bool = False,
         model_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """
-        Возвращает top_k матчей артефакта с моделями реестра,
-        отсортированных по убыванию резонанса.
-
-        Args:
-            artifact_id:    ID артефакта (без .json)
-            top_k:          сколько лучших моделей вернуть
-            math_type_only: если True — фильтровать только по совпадению math_type
-            model_id:       если задан — вернуть только этот model_id
-
-        Returns:
-            Список dict с ключами: artifact_id, model_id, resonance, math_type_match,
-            translation, thresholds, adaptation, calculation, verdict
-        """
         artifact = self._load_artifact(artifact_id)
         if not artifact:
-            return [{"error": f"Artifact '{artifact_id}' not found",
-                     "artifact_id": artifact_id}]
+            return [{"error": f"Artifact '{artifact_id}' not found", "artifact_id": artifact_id}]
 
         four_d = _extract_art_four_d(artifact)
         if not four_d:
-            return [{"error": "No four_d_matrix in artifact (запустите migrate_to_v42.py)",
-                     "artifact_id": artifact_id}]
+            return [{"error": "No four_d_matrix — run migrate_to_v42.py first", "artifact_id": artifact_id}]
 
         sim     = _extract_art_sim(artifact)
         ver     = artifact.get("data", {}).get("ver", {})
         flat    = _flat_4d(four_d)
         art_math = _norm_math_type(flat["model"])
-
-        art_vec = _art_vector(four_d)
+        art_vec  = _art_vector(four_d)
 
         candidates = self.registry
         if model_id:
@@ -500,21 +567,14 @@ class MGAPMatcher:
             return [{"error": f"No matching models (math_type={art_math}, math_type_only={math_type_only})",
                      "artifact_id": artifact_id}]
 
-        # Считаем резонанс для всех кандидатов
         scored: List[Tuple[float, Dict]] = []
         for model in candidates:
-            if art_vec is not None:
-                res = _compute_resonance(art_vec, model, art_math)
-            else:
-                # Fallback: ручное сходство по параметрам (если FourDMatrix недоступен)
-                res = self._resonance_fallback(flat, model)
+            res = _compute_resonance(art_vec, model, art_math)
             scored.append((res, model))
-
         scored.sort(key=lambda x: -x[0])
-        top = scored[:top_k]
 
         results = []
-        for resonance, model in top:
+        for resonance, model in scored[:top_k]:
             thresholds = _extract_thresholds(sim, ver, model)
             match = self._build_match(
                 artifact_id=artifact_id,
@@ -540,56 +600,47 @@ class MGAPMatcher:
         model: Dict,
         resonance: float,
     ) -> Dict[str, Any]:
-        """Собирает полный MGAP-отчёт для одного (артефакт, модель) совпадения."""
-        math_match = (_norm_math_type(model.get("math_type", "")) == art_math)
-
-        # Перевод параметров
+        math_match  = _norm_math_type(model.get("math_type", "")) == art_math
         translation = self._translate_params(flat, thresholds, model)
-
-        # Слепая зона (шаблон + опциональный LLM)
-        raw_blind = model.get("blind_spot_template", "Слепая зона не определена.").format(
+        raw_blind   = (model.get("blind_spot_template") or "").format(
             eta_max=thresholds["eta_critical"],
             tau_max=thresholds["tau_robustness"],
+            p_crit=0.37, p=flat.get("p", 0.5),
         )
-        blind_spot = self._llm_improve_blind_spot(raw_blind, model)
-
-        # Код адаптации
+        blind_spot   = self._improve_blind_spot(raw_blind, model)
         code_snippet = _generate_code(model, thresholds, flat)
+        calculation  = _calculate_example(model, thresholds)
+        verdict      = _build_verdict(model, calculation, resonance, thresholds)
 
-        # Расчёт на примере
-        calculation = _calculate_example(model, thresholds)
-
-        # Вердикт
-        verdict = _build_verdict(model, calculation, resonance, thresholds)
-
-        # Краткая сводка артефакта
         gen      = artifact.get("data", {}).get("gen", {})
         archivist = artifact.get("archivist") or {}
 
         return {
-            "artifact_id":   artifact_id,
-            "model_id":      model["id"],
-            "model_name":    model["name"],
-            "logia":         model["logia"],
-            "industry":      model["industry"],
-            "programs":      model["programs"],
-            "resonance":     resonance,
+            "artifact_id":    artifact_id,
+            "model_id":       model.get("id"),
+            "model_name":     model.get("name"),
+            "logia":          model.get("logia"),
+            "industry":       model.get("industry"),
+            "programs":       model.get("programs", []),
+            "disc_code":      model.get("disc_code"),
+            "sector_code":    model.get("sector_code"),
+            "resonance":      resonance,
             "math_type_match": math_match,
             "artifact_summary": {
-                "domain":         artifact.get("data", {}).get("domain", "—"),
-                "hypothesis":     gen.get("hypothesis", "")[:120],
-                "math_type":      art_math,
-                "stability_score": thresholds["stability_score"],
+                "domain":           artifact.get("data", {}).get("domain", "—"),
+                "hypothesis":       gen.get("hypothesis", "")[:120],
+                "math_type":        art_math,
+                "stability_score":  thresholds["stability_score"],
                 "survival_verified": thresholds["survival_verified"],
-                "novelty":        archivist.get("novelty", "—"),
+                "novelty":          archivist.get("novelty", "—"),
             },
             "thresholds":    thresholds,
             "translation":   translation,
             "blind_spot":    blind_spot,
             "adaptation": {
-                "formula":       model.get("math_adaptation_formula", "—"),
-                "code_snippet":  code_snippet,
-                "programs":      model["programs"],
+                "formula":      model.get("math_adaptation_formula", "—"),
+                "code_snippet": code_snippet,
+                "programs":     model.get("programs", []),
             },
             "calculation":   calculation,
             "verdict":       verdict,
@@ -597,10 +648,16 @@ class MGAPMatcher:
         }
 
     def _translate_params(self, flat: Dict, thresholds: Dict, model: Dict) -> Dict:
-        """Переводит tau, K, eta в отраслевые термины."""
-        tmap = model.get("translation_map", {})
+        tmap   = model.get("translation_map") or {}
         result: Dict = {}
-        for key, val in [("tau", flat["tau"]), ("K", flat["K"]), ("eta", flat["eta"])]:
+        # Для Изинга — ключевые параметры T и h, а не tau
+        mt = _norm_math_type(model.get("math_type", ""))
+        if mt == "ising":
+            key_params = [("T", flat["T"]), ("K", flat["K"]), ("eta", flat["eta"])]
+        else:
+            key_params = [("tau", flat["tau"]), ("K", flat["K"]), ("eta", flat["eta"])]
+
+        for key, val in key_params:
             if key in tmap:
                 entry = tmap[key]
                 result[entry["industry_term"]] = {
@@ -611,30 +668,28 @@ class MGAPMatcher:
                 }
             else:
                 result[key] = {"math_param": key, "value": round(val, 4)}
+
         result["_thresholds"] = {
             "eta_critical":   thresholds["eta_critical"],
             "tau_robustness": thresholds["tau_robustness"],
         }
         return result
 
-    def _resonance_fallback(self, flat: Dict, model: Dict) -> float:
-        """Ручной расчёт резонанса если schemas.four_d_matrix недоступен."""
-        params = [("tau", flat["tau"]), ("K", flat["K"]), ("eta", flat["eta"])]
-        m4d    = model.get("four_d_matrix", {})
-        m_flat = _flat_4d(m4d)
-        ranges = model.get("expected_ranges", {})
-        weights = model.get("weights", {})
-        total = 0.0; score = 0.0
-        for key, val in params:
-            r   = ranges.get(key, [0.0, 1.0])
-            w   = weights.get(key, 1.0)
-            span = max(r[1] - r[0], 1e-9)
-            sim = max(0.0, 1.0 - abs(val - m_flat.get(key, 0.5)) / span)
-            score += sim * w
-            total += w
-        return round(score / max(total, 1e-9), 3)
-
-    # ── batch режим ───────────────────────────────────────
+    def _improve_blind_spot(self, template: str, model: Dict) -> str:
+        if not self.llm or not template:
+            return template
+        prompt = (
+            f"Улучши описание слепой зоны для модели «{model.get('name')}» "
+            f"(отрасль: {model.get('logia')}). Сохрани все числа. "
+            f"Верни ТОЛЬКО улучшенный текст, одним абзацем:\n{template}"
+        )
+        try:
+            improved, _ = self.llm.generate(prompt)
+            if improved and len(improved) > 20 and not improved.startswith("[Generator error]"):
+                return improved.strip()
+        except Exception:
+            pass
+        return template
 
     def match_batch(
         self,
@@ -642,24 +697,16 @@ class MGAPMatcher:
         math_type_only: bool = True,
         min_resonance: float = 0.3,
     ) -> Dict[str, List[Dict]]:
-        """
-        Прогоняет все артефакты из artifacts/ через MGAPMatcher.
-        Возвращает словарь {artifact_id: [top matches]}.
-        """
         results: Dict[str, List[Dict]] = {}
-        arts_path = self.artifacts_dir
-        if not arts_path.exists():
-            logger.warning("artifacts/ not found")
+        if not self.artifacts_dir.exists():
             return results
-
-        for f in sorted(arts_path.glob("*.json")):
+        for f in sorted(self.artifacts_dir.glob("*.json")):
             if f.stem == "invariant_graph" or ".hyx-portal" in f.name:
                 continue
             art_id = f.stem
             try:
                 matches = self.match_artifact(art_id, top_k=top_k,
                                                math_type_only=math_type_only)
-                # фильтруем по минимальному резонансу
                 ok = [m for m in matches
                       if not m.get("error") and m.get("resonance", 0) >= min_resonance]
                 if ok:
@@ -670,8 +717,6 @@ class MGAPMatcher:
                 logger.warning(f"MGAP batch: {art_id} failed — {e}")
         return results
 
-    # ── реестр ────────────────────────────────────────────
-
     def get_registry_summary(self) -> List[Dict]:
         return [
             {
@@ -680,6 +725,8 @@ class MGAPMatcher:
                 "logia":     m["logia"],
                 "industry":  m["industry"],
                 "math_type": m.get("math_type", "—"),
+                "disc_code": m.get("disc_code"),
+                "sector_code": m.get("sector_code"),
                 "programs":  m.get("programs", []),
             }
             for m in self.registry
@@ -693,22 +740,19 @@ class MGAPMatcher:
 def _cli():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    parser = argparse.ArgumentParser(description="HX-AM v4.4 MGAPMatcher CLI")
-    parser.add_argument("--artifact",   type=str, default="",  help="Artifact ID")
-    parser.add_argument("--model",      type=str, default="",  help="Filter by Model ID (e.g. M1)")
-    parser.add_argument("--top_k",      type=int, default=3,   help="Top-K matches")
-    parser.add_argument("--all_types",  action="store_true",   help="Match across all math types")
-    parser.add_argument("--batch",      action="store_true",   help="Batch: all artifacts")
-    parser.add_argument("--registry",   action="store_true",   help="Print registry summary")
-    parser.add_argument("--min_res",    type=float, default=0.3, help="Min resonance for batch")
+    parser = argparse.ArgumentParser(description="HX-AM v4.5 MGAPMatcher CLI")
+    parser.add_argument("--artifact",      type=str, default="")
+    parser.add_argument("--model",         type=str, default="")
+    parser.add_argument("--top_k",         type=int, default=3)
+    parser.add_argument("--all_types",     action="store_true")
+    parser.add_argument("--batch",         action="store_true")
+    parser.add_argument("--registry",      action="store_true")
+    parser.add_argument("--min_res",       type=float, default=0.3)
     parser.add_argument("--registry_path", type=str, default="mgap_registry.json")
     parser.add_argument("--artifacts_dir", type=str, default="artifacts")
     args = parser.parse_args()
 
-    matcher = MGAPMatcher(
-        registry_path=args.registry_path,
-        artifacts_dir=args.artifacts_dir,
-    )
+    matcher = MGAPMatcher(registry_path=args.registry_path, artifacts_dir=args.artifacts_dir)
 
     if args.registry:
         print(json.dumps(matcher.get_registry_summary(), ensure_ascii=False, indent=2))

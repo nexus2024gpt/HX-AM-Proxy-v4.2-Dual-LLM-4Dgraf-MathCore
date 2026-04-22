@@ -257,6 +257,29 @@ def update_referenced_artifact(ref_id: str, result: dict, query: str):
 
         try:
             archivist_result = archivist.process(ref_id)
+            
+            # ── PHENOMENAL GATE (REF update) ────────────────────────────────────
+            # Применяем тот же gate что и в process_query()
+            _arch_ref = archivist_result or {}
+            if _arch_ref.get("novelty") == "PHENOMENAL":
+                _sim_ref = artifact.get("simulation") or {}
+                _score_ref = float(_sim_ref.get("stability_score", 1.0))
+                if _score_ref < 0.5:
+                    _arch_ref["novelty"]           = "NOVEL"
+                    _arch_ref["_downgraded_from"]  = "PHENOMENAL"
+                    _arch_ref["_downgrade_reason"] = f"stability_score={_score_ref:.3f} < 0.5 (math gate, REF update)"
+                    archivist_result = _arch_ref
+                    try:
+                        _art_path_ref = Path("artifacts") / f"{ref_id}.json"
+                        if _art_path_ref.exists():
+                            _art_data_ref = json.loads(_art_path_ref.read_text(encoding="utf-8"))
+                            _art_data_ref["archivist"] = _arch_ref
+                            _art_path_ref.write_text(json.dumps(_art_data_ref, ensure_ascii=False, indent=2))
+                    except Exception as _ge:
+                        logger.warning(f"PHENOMENAL gate (REF) patch failed: {_ge}")
+                    logger.info(f"REF {ref_id}: PHENOMENAL→NOVEL (math gate, score={_score_ref:.3f})")
+            # ─────────────────────────────────────────────────────────────────────
+            
             logger.info(f"Archivist re-ran for REF {ref_id}: {archivist_result.get('novelty')}")
         except Exception as e:
             logger.warning(f"Archivist re-run failed for REF {ref_id}: {e}")
