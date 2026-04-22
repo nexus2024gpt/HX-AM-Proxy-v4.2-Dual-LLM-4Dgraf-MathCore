@@ -1049,32 +1049,55 @@ def mgap_match(
 ):
     """
     Поиск топ-K отраслевых моделей, резонирующих с артефактом.
+
+    Fallback: если math_type_only=True даёт пустой результат (нет моделей данного
+    math_type в реестре) — автоматически повторяет поиск по всем math_type.
+    Результат fallback-поиска помечается полем _fallback=True.
+
+    Сохранение: один файл mgap_results/{artifact_id}.json — перезапись при каждом вызове.
     """
     try:
+        math_type_only = not all_types
         results = mgap_matcher.match_artifact(
             artifact_id=artifact_id,
             top_k=top_k,
-            math_type_only=not all_types,
+            math_type_only=math_type_only,
             model_id=model_id or None,
         )
-        # Формируем ответ (такой же, как возвращался раньше)
+
+        # ── Fallback: нет моделей с точным math_type → ищем по всем ─────────
+        first_is_error = bool(results and results[0].get("error"))
+        if first_is_error and math_type_only:
+            original_error = results[0].get("error", "no exact math_type match")
+            logger.info(f"MGAP fallback triggered for {artifact_id}: {original_error}")
+            results_fb = mgap_matcher.match_artifact(
+                artifact_id=artifact_id,
+                top_k=top_k,
+                math_type_only=False,
+                model_id=model_id or None,
+            )
+            if results_fb and not results_fb[0].get("error"):
+                for r in results_fb:
+                    r["_fallback"] = True
+                    r["_fallback_reason"] = original_error
+                results = results_fb
+                logger.info(
+                    f"MGAP fallback success: {artifact_id} → "
+                    f"{[r.get('model_id') for r in results[:2]]}"
+                )
+
         response = {"artifact_id": artifact_id, "matches": results, "total": len(results)}
-        
-        # --- Сохранение в папку mgap_results ---
+
+        # ── Сохранение: без timestamp → один файл на артефакт ────────────────
         try:
-            # Убедимся, что папка существует (на случай, если её удалили)
             os.makedirs("mgap_results", exist_ok=True)
-            # Имя файла: artifact_id + временная метка (сек)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"mgap_results/{artifact_id}_{timestamp}.json"
+            filename = f"mgap_results/{artifact_id}.json"   # ← перезапись
             with open(filename, "w", encoding="utf-8") as f:
                 json.dump(response, f, indent=2, ensure_ascii=False)
-            logging.info(f"MGAP result saved to {filename}")
-        except Exception as e:
-            # Ошибка сохранения не должна ломать ответ
-            logging.error(f"Failed to save MGAP result: {e}")
-        # --- Конец блока сохранения ---
-        
+            logger.info(f"MGAP result saved: {filename}")
+        except Exception as save_err:
+            logger.error(f"Failed to save MGAP result: {save_err}")
+
         return response
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -1086,7 +1109,8 @@ def mgap_registry():
     return {
         "models": mgap_matcher.get_registry_summary(),
         "total": len(mgap_matcher.registry),
-        "version": "v4.4",
+        "version": "v4.5",
+        "math_types": list({m.get("math_type") for m in mgap_matcher.registry}),
     }
 
 
@@ -1096,13 +1120,41 @@ def mgap_batch_endpoint(
     all_types: bool = False,
     min_resonance: float = 0.3,
 ):
-    """Batch: прогнать все артефакты через MGAPMatcher."""
+    """
+    Batch: прогнать все артефакты через MGAPMatcher.
+    Fallback: артефакты без exact math_type матча автоматически получают
+    cross-type поиск, их результаты помечаются _fallback=True.
+    """
     try:
         results = mgap_matcher.match_batch(
             top_k=top_k,
             math_type_only=not all_types,
             min_resonance=min_resonance,
         )
+
+        # ── Fallback для артефактов без exact матча ───────────────────────────
+        if not all_types:
+            artifacts_dir = Path("artifacts")
+            for f in sorted(artifacts_dir.glob("*.json")):
+                if f.stem == "invariant_graph" or ".hyx-portal" in f.name:
+                    continue
+                art_id = f.stem
+                if art_id not in results:
+                    try:
+                        fb = mgap_matcher.match_artifact(
+                            art_id, top_k=top_k, math_type_only=False
+                        )
+                        ok = [
+                            m for m in fb
+                            if not m.get("error") and m.get("resonance", 0) >= min_resonance
+                        ]
+                        if ok:
+                            for m in ok:
+                                m["_fallback"] = True
+                            results[art_id] = ok
+                    except Exception:
+                        pass
+
         return {
             "results": results,
             "artifacts_count": len(results),
