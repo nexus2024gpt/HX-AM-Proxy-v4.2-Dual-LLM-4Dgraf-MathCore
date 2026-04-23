@@ -594,6 +594,27 @@ def query(req: QueryRequest):
 def get_quarantine(limit: int = 20):
     return {"quarantine": quarantine.recent(limit)}
 
+@app.delete("/quarantine/{job_id}")
+def delete_quarantine_entry(job_id: str):
+    path = quarantine.path
+    if not path.exists():
+        raise HTTPException(404, "Quarantine log not found")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    new_lines, found = [], False
+    for line in lines:
+        try:
+            if json.loads(line).get("job_id") == job_id:
+                found = True
+                continue
+        except Exception:
+            pass
+        new_lines.append(line)
+    if not found:
+        raise HTTPException(404, f"Entry {job_id} not found in quarantine")
+    path.write_text(("\n".join(new_lines) + "\n") if new_lines else "", encoding="utf-8")
+    logger.info(f"Quarantine entry deleted: {job_id}")
+    return {"ok": True, "deleted": job_id}
+
 @app.get("/rag/context")
 def rag_context(text: str, top_k: int = 3):
     similar = semantic_space.nearest(text, top_k=top_k, threshold=0.55)
@@ -795,6 +816,16 @@ def get_trash_list():
             continue
     return {"trash": result}
 
+@app.delete("/trash/clear")
+def clear_trash_all():
+    trash_path = Path("trash")
+    if not trash_path.exists():
+        return {"ok": True, "deleted_count": 0}
+    files = list(trash_path.glob("*.json"))
+    for f in files:
+        f.unlink()
+    logger.info(f"Trash cleared: {len(files)} files")
+    return {"ok": True, "deleted_count": len(files)}
 
 @app.post("/trash/{artifact_id}/restore")
 def restore_from_trash(artifact_id: str):
@@ -884,6 +915,8 @@ def graph_data():
             "weight": attrs.get("weight", 0.0),
             "similarity": attrs.get("similarity", 0.0),
             "domain_distance": attrs.get("domain_distance", 0.0),
+            "four_d_resonance": attrs.get("four_d_resonance", 0.0),
+            "specificity": attrs.get("specificity", 0.0),
         })
     clusters = [list(c) for c in invariant_graph.get_invariant_clusters()]
     bridge_nodes = {n for e in invariant_graph.get_bridges() for n in e}

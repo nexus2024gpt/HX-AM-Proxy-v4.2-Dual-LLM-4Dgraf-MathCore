@@ -1071,15 +1071,28 @@ function renderPipelineResult(data) {
   const archivist = data.archivist || {};
   const sim = data.simulation || {};
 
-  let html = `<div style="margin-bottom:1rem;font-size:.8rem;color:#64748b">Job: <span style="font-family:monospace;color:#fbbf24">${data.job_id||'—'}</span></div>`;
+  let html = `<div style="margin-bottom:1rem;font-size:.8rem;color:#64748b">
+    Job: <span style="font-family:monospace;color:#fbbf24">${data.job_id||'—'}</span>
+    ${data.save_skipped_reason
+      ? `<span style="margin-left:1rem;background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;border-radius:4px;padding:.1rem .5rem;font-size:.72rem">
+          ⚠ Сохранение подавлено: ${escHtml(data.save_skipped_reason)}
+         </span>`
+      : ''}
+  </div>`;
 
   const vcolor = ver.verdict==='VALID'?'#4ade80':ver.verdict==='WEAK'?'#fbbf24':'#ef4444';
+
+  // ── Генерация ──
   html += `<div class="panel" style="border-left-color:#6366f1;min-width:300px;flex:1">
     <h3>⚡ Генерация</h3>
     <div class="math-card-body" style="padding:.75rem">
-      <div class="detail-field"><div class="detail-key">Гипотеза</div><div class="detail-val">${escHtml(gen.hypothesis||'—')}</div></div>
-      <div class="detail-field"><div class="detail-key">Механизм</div><div class="detail-val">${escHtml((gen.mechanism||'').substring(0,200))}</div></div>
-      <div style="display:flex;gap:1rem;flex-wrap:wrap">
+      <div class="detail-field"><div class="detail-key">Гипотеза</div>
+        <div class="detail-val">${escHtml(gen.hypothesis||'—')}</div></div>
+      <div class="detail-field"><div class="detail-key">Механизм</div>
+        <div class="detail-val">${escHtml((gen.mechanism||'').substring(0,200))}</div></div>
+      ${gen.implication ? `<div class="detail-field"><div class="detail-key">Следствие</div>
+        <div class="detail-val" style="color:#94a3b8;font-size:.8rem">${escHtml(gen.implication.substring(0,200))}</div></div>` : ''}
+      <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:.4rem">
         <div><div class="detail-key">Домен</div><div class="detail-val"><b>${gen.domain||data.domain||'—'}</b></div></div>
         <div><div class="detail-key">b_sync</div><div class="detail-val"><b>${gen.b_sync||'—'}</b></div></div>
         <div><div class="detail-key">Модель</div><div class="detail-val" style="font-size:.72rem;color:#64748b">${data.gen_model||'—'}</div></div>
@@ -1087,19 +1100,38 @@ function renderPipelineResult(data) {
     </div>
   </div>`;
 
+  // ── Верификация ──
+  const stressTest = ver.stress_test || {};
+  const stableColor = stressTest.stress_dynamics_stable === false ? '#ef4444' : '#4ade80';
   html += `<div class="panel" style="border-left-color:${vcolor};min-width:280px;flex:1">
     <h3>🔍 Верификация</h3>
     <div class="math-card-body" style="padding:.75rem">
-      <div style="font-size:1.1rem;font-weight:800;color:${vcolor};margin-bottom:.5rem">${ver.verdict||'—'} <span style="font-size:.8rem;color:#94a3b8;font-weight:normal">conf=${ver.confidence||'—'}</span></div>
+      <div style="font-size:1.1rem;font-weight:800;color:${vcolor};margin-bottom:.5rem">
+        ${ver.verdict||'—'} <span style="font-size:.8rem;color:#94a3b8;font-weight:normal">conf=${ver.confidence||'—'}</span>
+      </div>
       ${ver.translation ? `<div style="font-size:.8rem;margin-bottom:.4rem">
         Step 0 → <b>${ver.translation.target_domain||'?'}</b>
         <span style="color:${ver.translation.survival==='STRUCTURAL'?'#4ade80':'#f59e0b'};margin-left:.4rem">${ver.translation.survival||'?'}</span>
       </div>` : ''}
-      ${(ver.issues||[]).length ? `<div style="font-size:.75rem;color:#f87171">${ver.issues.slice(0,2).map(i=>'· '+i).join('<br>')}</div>` : '<div style="font-size:.75rem;color:#4ade80">✓ Нет замечаний</div>'}
+      ${stressTest.tau_robustness !== undefined ? `
+        <div style="font-size:.75rem;margin-bottom:.3rem;display:flex;gap:.75rem;align-items:center">
+          <span style="color:#94a3b8">Step 1:</span>
+          <span style="color:${stableColor}">${stressTest.stress_dynamics_stable !== false ? '✓ стабильна' : '✗ нестабильна'}</span>
+          <span style="color:#64748b">τ_max=${typeof stressTest.tau_robustness==='number'?stressTest.tau_robustness.toFixed(2):'—'}</span>
+          <span style="color:#64748b">η_crit=${typeof stressTest.eta_critical==='number'?stressTest.eta_critical.toFixed(2):'—'}</span>
+        </div>` : ''}
+      ${ver.refined_hypothesis ? `<div style="font-size:.75rem;background:#6366f111;border-radius:6px;padding:.35rem .5rem;margin-bottom:.3rem">
+        <span style="color:#6366f1;font-size:.65rem;text-transform:uppercase;letter-spacing:.05em">Уточнённая гипотеза</span><br>
+        <span style="color:#cbd5e1">${escHtml(ver.refined_hypothesis.substring(0,200))}</span>
+      </div>` : ''}
+      ${(ver.issues||[]).length
+        ? `<div style="font-size:.75rem;color:#f87171">${ver.issues.slice(0,2).map(i=>'· '+escHtml(i)).join('<br>')}</div>`
+        : '<div style="font-size:.75rem;color:#4ade80">✓ Нет замечаний</div>'}
       <div style="font-size:.72rem;color:#64748b;margin-top:.4rem">${data.ver_model||'—'}</div>
     </div>
   </div>`;
 
+  // ── Структура ──
   if (structural.artifact_type) {
     const tc = typeColor(structural.artifact_type);
     html += `<div class="panel" style="border-left-color:${tc};min-width:240px;flex:1">
@@ -1107,33 +1139,66 @@ function renderPipelineResult(data) {
       <div class="math-card-body" style="padding:.75rem">
         <div style="font-size:1rem;font-weight:700;color:${tc};margin-bottom:.4rem">${structural.artifact_type||'—'}</div>
         <div style="font-size:.8rem;color:#94a3b8">${structural.stability||'—'} ${structural.is_stable?'✓':'✗'}</div>
-        <div style="font-size:.75rem;margin-top:.3rem">spec=${structural.specificity||'—'} · bridge=${structural.is_bridge?'✅':'—'}</div>
+        <div style="font-size:.75rem;margin-top:.3rem">
+          spec=${structural.specificity||'—'} · bridge=${structural.is_bridge?'✅':'—'}
+          ${structural.top_4d_resonance !== undefined
+            ? ` · 4D-res=<b style="color:${structural.top_4d_resonance>0.6?'#4ade80':'#94a3b8'}">${structural.top_4d_resonance.toFixed(3)}</b>`
+            : ''}
+        </div>
         <div style="font-size:.72rem;color:#64748b;margin-top:.3rem">phase: ${(structural.phase_signal||{}).signal||'—'} (${(structural.phase_signal||{}).density||'—'})</div>
       </div>
     </div>`;
   }
 
+  // ── Archivist ──
   if (archivist.novelty) {
     const nc = {PHENOMENAL:'#22d3ee',NOVEL:'#4ade80',KNOWN:'#94a3b8'}[archivist.novelty.split(':')[0]] || '#f59e0b';
+    const links_to = (archivist.linked_to||[]).slice(0,3);
+    const cross = (archivist.cross_domain_links||[]).slice(0,2);
+    const tags = (archivist.suggested_tags||[]).slice(0,3);
     html += `<div class="panel" style="border-left-color:#22d3ee;min-width:240px;flex:1">
       <h3>🗄️ Archivist</h3>
       <div class="math-card-body" style="padding:.75rem">
         <div style="font-size:1rem;font-weight:700;color:${nc};margin-bottom:.4rem">${archivist.novelty||'—'}</div>
         <div style="font-size:.8rem;color:#94a3b8">score=${archivist.novelty_score||'—'} · conf=${archivist.confidence||'—'}</div>
+        ${cross.length ? `<div style="font-size:.72rem;color:#22d3ee;margin-top:.3rem">${cross.map(c=>'↔ '+escHtml(c)).join('  ')}</div>` : ''}
+        ${links_to.length ? `<div style="font-size:.7rem;color:#60a5fa;margin-top:.2rem">→ ${links_to.map(l=>`<span style="font-family:monospace">${l.substring(0,8)}</span>`).join(', ')}</div>` : ''}
+        ${tags.length ? `<div style="margin-top:.3rem">${tags.map(t=>`<span style="background:#334155;color:#94a3b8;border-radius:3px;padding:.08rem .3rem;font-size:.62rem;margin-right:.2rem">${escHtml(t)}</span>`).join('')}</div>` : ''}
         <div style="font-size:.75rem;color:#64748b;margin-top:.3rem">${archivist.reasoning_summary||''}</div>
       </div>
     </div>`;
   }
 
+  // ── MathCore ──
   if (sim.stability_score !== undefined) {
-    const sc = sim.stability_score;
+    const sc = sim.stability_score ?? 0;
+    const ly = sim.lyapunov_max ?? 0;
     const scColor = sc >= 0.7?'#4ade80':sc >= 0.4?'#f59e0b':'#ef4444';
-    html += `<div class="panel" style="border-left-color:#4ade80;min-width:200px;flex:1">
+    const lyColor = ly < 0 ? '#4ade80' : '#ef4444';
+    const usm = sim.usm || {};
+    html += `<div class="panel" style="border-left-color:#4ade80;min-width:220px;flex:1">
       <h3>🧮 MathCore</h3>
       <div class="math-card-body" style="padding:.75rem">
-        <div style="font-size:1.2rem;font-weight:800;color:${scColor}">${(sc*100).toFixed(0)}% <span style="font-size:.72rem;color:#64748b">stability</span></div>
-        <div style="font-size:.8rem;color:#94a3b8">λ_max=${sim.lyapunov_max||'—'}</div>
-        <div style="font-size:.75rem;margin-top:.3rem;color:${sim.survival_verified?'#4ade80':'#ef4444'}">${sim.survival_verified?'✅ Выжил':'❌ Нестабилен'}</div>
+        <div style="font-size:1.2rem;font-weight:800;color:${scColor}">${(sc*100).toFixed(0)}%
+          <span style="font-size:.72rem;color:#64748b"> stability</span></div>
+        <div style="font-size:.8rem;color:#94a3b8">λ_max=<span style="color:${lyColor}">${ly.toFixed(3)}</span> · ${sim.model_used||'—'}</div>
+        ${usm.usm !== undefined ? `
+        <div style="margin-top:.5rem;font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">USM компоненты</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.25rem .5rem;margin-top:.2rem">
+          ${[['Фаза',usm.phase_proximity],['Шум',usm.noise_robustness],['Время',usm.temporal_coherence],['Структура',usm.structural_integrity]].map(([k,v])=>{
+            if(v===undefined)return'';
+            const pct=Math.round((v||0)*100);
+            const c=pct>=70?'#4ade80':pct>=40?'#f59e0b':'#ef4444';
+            return `<div><div style="font-size:.65rem;color:#64748b">${k}</div>
+              <div style="display:flex;align-items:center;gap:.3rem">
+                <div style="flex:1;height:5px;background:#1e3a5f;border-radius:3px">
+                  <div style="width:${pct}%;height:100%;background:${c};border-radius:3px"></div>
+                </div>
+                <span style="font-size:.65rem;color:${c};width:28px;text-align:right">${pct}%</span>
+              </div></div>`;
+          }).join('')}
+        </div>` : ''}
+        <div style="margin-top:.4rem;font-size:.75rem;color:${sim.survival_verified?'#4ade80':'#ef4444'}">${sim.survival_verified?'✅ Выжил':'❌ Нестабилен'}</div>
       </div>
     </div>`;
   }
@@ -1399,9 +1464,14 @@ function renderGraph3D(data) {
     .nodeVal(n => n.val)
     .nodeOpacity(0.95)
     .linkColor(l => l._edgeColor)
-    .linkWidth(l => 0.5 + (l.weight / maxWeight) * 4)
+    .linkWidth(l => {
+      const base = 0.5 + ((l.weight||0) / maxWeight) * 4;
+      const boost = (l.four_d_resonance||0) * 2;
+      return base + boost;
+    })
     .linkOpacity(0.7)
-    .linkLabel(l => `weight: ${(l.weight||0).toFixed(3)} · sim: ${(l.similarity||0).toFixed(3)}`)
+    .linkLabel(l => `weight: ${(l.weight||0).toFixed(3)} · sim: ${(l.similarity||0).toFixed(3)}` +
+      (l.four_d_resonance > 0 ? ` · 4D: ${l.four_d_resonance.toFixed(3)}` : ''))
     .graphData(graphData)
     .onNodeClick(node => showNodeDetail(node));
 
@@ -1882,13 +1952,46 @@ function renderStressResult(data) {
     return `<div class="stress-item"><div class="stress-item-label">${it.label}</div><div class="stress-item-val" style="color:${c}">${it.stable?'✓':'✗'}</div></div>`;
   }).join('');
 
+  const usm = data.usm || {};
+  let usmHtml = '';
+  if (usm.usm !== undefined) {
+    const usmPct = Math.round((usm.usm||0)*100);
+    const usmColor = usmPct>=70?'#4ade80':usmPct>=40?'#f59e0b':'#ef4444';
+    const parts = [
+      ['Фаза', usm.phase_proximity],
+      ['Шум',  usm.noise_robustness],
+      ['Время',usm.temporal_coherence],
+      ['Структура', usm.structural_integrity],
+    ];
+    usmHtml = `<div style="margin-top:.6rem;background:#0f172a;border-radius:6px;padding:.5rem .75rem">
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.4rem">
+        <span style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">USM</span>
+        <span style="font-size:.85rem;font-weight:700;font-family:monospace;color:${usmColor}">${usmPct}%</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.25rem .75rem">
+        ${parts.map(([k,v])=>{
+          if(v===undefined)return'';
+          const pct=Math.round((v||0)*100);
+          const c=pct>=70?'#4ade80':pct>=40?'#f59e0b':'#ef4444';
+          return `<div><div style="font-size:.63rem;color:#64748b">${k}</div>
+            <div style="display:flex;align-items:center;gap:.25rem">
+              <div style="flex:1;height:4px;background:#1e3a5f;border-radius:2px">
+                <div style="width:${pct}%;height:100%;background:${c};border-radius:2px"></div>
+              </div>
+              <span style="font-size:.63rem;color:${c};width:26px;text-align:right">${pct}%</span>
+            </div></div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
   const bf = data.bifurcation_boundary || {};
   const survived = data.survival_verified;
   document.getElementById('stress-boundaries').innerHTML =
     `Модель: <b>${data.model_used||'—'}</b> · η_crit: <b>${data.eta_critical??'—'}</b> · ` +
     `K>Kc: <b style="color:${bf.K_above_critical?'#4ade80':'#ef4444'}">${bf.K_above_critical?'ДА':'НЕТ'}</b> · ` +
     `cpu: <b>${data.cpu_time_s??'—'}s</b> · ` +
-    `<b style="color:${survived?'#4ade80':'#ef4444'}">${survived?'✅ ВЫЖИЛ':'❌ НЕСТАБИЛЕН'}</b>`;
+    `<b style="color:${survived?'#4ade80':'#ef4444'}">${survived?'✅ ВЫЖИЛ':'❌ НЕСТАБИЛЕН'}</b>`
+    + usmHtml;
 }
 
 async function loadInsights() {
