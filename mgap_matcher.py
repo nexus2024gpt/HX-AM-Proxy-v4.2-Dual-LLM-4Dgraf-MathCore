@@ -412,58 +412,236 @@ def _calculate_example(model: Dict, thresholds: Dict) -> Dict:
 
 
 # ══════════════════════════════════════════════════════════
+# ПРОВЕРКА РЕАЛЬНЫХ ПАРАМЕТРОВ АРТЕФАКТА
+# ══════════════════════════════════════════════════════════
+
+def _calculate_with_artifact_params(model: Dict, flat: Dict, thresholds: Dict) -> Dict:
+    """
+    Проверяет РЕАЛЬНЫЕ параметры артефакта против порогов модели.
+    В отличие от _calculate_example, не использует синтетику из реестра.
+    """
+    K     = flat.get("K",   0.35)
+    eta   = flat.get("eta", 0.2)
+    tau   = flat.get("tau", 0.5)
+    eta_c = thresholds["eta_critical"]
+    tau_c = thresholds["tau_robustness"]
+    K_min = float(model.get("critical_thresholds", {}).get("K_min", 0.0))
+
+    warns = []
+    if K_min > 0 and K < K_min:
+        warns.append(
+            f"K={K:.3f} < K_min={K_min:.3f} "
+            f"(артефакт ниже порога связи модели)"
+        )
+    if eta > eta_c:
+        warns.append(
+            f"η={eta:.3f} > η_crit={eta_c:.3f} "
+            f"(шум превышает критический порог)"
+        )
+    if tau > tau_c:
+        warns.append(
+            f"τ={tau:.3f} > τ_crit={tau_c:.3f} "
+            f"(задержка превышает критический порог)"
+        )
+
+    return {
+        "example_type": "artifact_params",
+        "artifact_K":   round(K,   4),
+        "artifact_eta": round(eta, 4),
+        "artifact_tau": round(tau, 4),
+        "model_K_min":  K_min,
+        "model_eta_crit": eta_c,
+        "model_tau_crit": tau_c,
+        "K_ok":    K >= K_min if K_min > 0 else True,
+        "eta_ok":  eta <= eta_c,
+        "tau_ok":  tau <= tau_c,
+        "warnings": warns,
+        "stable":   len(warns) == 0,
+        "warning_triggered": len(warns) > 0,
+    }
+
+
+# ══════════════════════════════════════════════════════════
+# ОБЪЯСНЕНИЕ ПОХОЖЕСТИ
+# ══════════════════════════════════════════════════════════
+
+# Ключевые слова по math_type — для объяснения похожести
+_MATHTYPE_KEYWORDS: Dict[str, List[str]] = {
+    "kuramoto":        ["синхронизация", "фаза", "осциллятор", "связь", "частота",
+                        "synchronization", "phase", "oscillator", "coupling", "frequency"],
+    "percolation":     ["перколяция", "каскад", "порог", "связность", "распространение",
+                        "percolation", "cascade", "threshold", "connectivity"],
+    "ising":           ["бинарный", "спин", "поле", "температура", "фазовый переход",
+                        "binary", "spin", "field", "temperature", "phase transition"],
+    "delay":           ["задержка", "запаздывание", "лаг", "обратная связь",
+                        "delay", "lag", "feedback"],
+    "graph_invariant": ["граф", "топология", "связность", "инвариант", "кластер",
+                        "graph", "topology", "connectivity", "invariant", "cluster"],
+    "lotka_volterra":  ["хищник", "жертва", "конкуренция", "популяция",
+                        "predator", "prey", "competition", "population"],
+}
+
+
+def _build_similarity_explanation(
+    model: Dict,
+    flat: Dict,
+    thresholds: Dict,
+    artifact_hypothesis: str,
+    resonance: float,
+) -> Dict:
+    """
+    Объясняет, почему артефакт похож на модель.
+    Возвращает: matching_keywords, param_proximity, domain_bridge, resonance_tier.
+    """
+    mt = _norm_math_type(model.get("math_type", ""))
+    hyp_lower = artifact_hypothesis.lower()
+
+    # 1. Совпадение ключевых слов
+    keywords = _MATHTYPE_KEYWORDS.get(mt, [])
+    found_kw = [kw for kw in keywords if kw in hyp_lower]
+
+    # 2. Близость параметров (сравниваем с 4D модели)
+    m4d   = model.get("four_d_matrix") or {}
+    m_dyn = m4d.get("dynamics", {})
+    m_inf = m4d.get("influence", {})
+    m_tim = m4d.get("time", {})
+
+    param_rows = []
+    pairs = [
+        ("K",       flat.get("K",   0.35), float(m_dyn.get("K",   0)),   "константа связи"),
+        ("K_c",     flat.get("K_c", 0.48), float(m_dyn.get("K_c", 0)),   "критич. порог"),
+        ("eta",     flat.get("eta", 0.2),  float(m_inf.get("eta", 0)),   "уровень шума"),
+        ("tau",     flat.get("tau", 0.5),  float(m_tim.get("tau", 0)),   "задержка"),
+        ("omega_i", flat.get("omega_i",0.25), float(m_dyn.get("omega_i",0)), "частота"),
+    ]
+    for name, art_v, mod_v, label in pairs:
+        if mod_v == 0:
+            continue
+        delta = abs(art_v - mod_v)
+        pct   = round(delta / max(mod_v, 1e-6) * 100, 1)
+        close = pct <= 25
+        param_rows.append({
+            "param":   name,
+            "label":   label,
+            "artifact": round(art_v, 3),
+            "model":    round(mod_v, 3),
+            "delta_pct": pct,
+            "close":    close,
+        })
+
+    close_params = [r["param"] for r in param_rows if r["close"]]
+
+    # 3. Доменный мост
+    art_domain   = "neuroscience"          # из контекста; передаётся снаружи через flat
+    model_logia  = model.get("logia", "")
+    domain_bridge = f"{art_domain} → {model_logia}"
+
+    # 4. Уровень резонанса
+    if resonance >= 0.8:
+        tier = "высокий"
+    elif resonance >= 0.65:
+        tier = "средний"
+    else:
+        tier = "низкий"
+
+    # 5. Текстовое объяснение
+    kw_str    = ", ".join(found_kw[:5]) if found_kw else "нет явных совпадений"
+    close_str = ", ".join(close_params) if close_params else "нет близких параметров"
+    explanation = (
+        f"Оба объекта используют модель {mt}. "
+        f"Совпадающие ключевые слова: {kw_str}. "
+        f"Близкие параметры (отклонение ≤25%%): {close_str}. "
+        f"Резонанс {resonance:.3f} — {tier}."
+    )
+
+    return {
+        "matching_keywords":  found_kw[:8],
+        "param_proximity":    param_rows,
+        "close_params":       close_params,
+        "domain_bridge":      domain_bridge,
+        "resonance_tier":     tier,
+        "resonance":          resonance,
+        "explanation_text":   explanation,
+    }
+
+
+# ══════════════════════════════════════════════════════════
 # ВЕРДИКТ — учитывает survival_verified и stability_score
 # ══════════════════════════════════════════════════════════
 
-def _build_verdict(model: Dict, calc: Dict, resonance: float, thresholds: Dict) -> Dict:
-    warn = calc.get("warning_triggered", False)
-    prog = (model.get("programs") or ["target_system"])[0]
+def _build_verdict(
+    model: Dict,
+    calc: Dict,
+    artifact_calc: Dict,
+    resonance: float,
+    thresholds: Dict,
+) -> Dict:
+    """
+    Вердикт строится по РЕАЛЬНЫМ параметрам артефакта (artifact_calc),
+    а не по примеру из реестра (calc).
+    calc оставлен для обратной совместимости — используется только как fallback.
+    """
+    # Используем artifact_calc как основной источник предупреждений
+    warn  = artifact_calc.get("warning_triggered", calc.get("warning_triggered", False))
+    warns = artifact_calc.get("warnings", [])
+    prog  = (model.get("programs") or ["target_system"])[0]
 
-    stability_score  = thresholds.get("stability_score", 1.0)
+    stability_score   = thresholds.get("stability_score", 1.0)
     survival_verified = thresholds.get("survival_verified", True)
+    math_unstable     = (stability_score < 0.5) or (not survival_verified)
 
-    # v4.5: учитываем математическую нестабильность
-    math_unstable = (stability_score < 0.5) or (not survival_verified)
+    warns_str = "; ".join(warns) if warns else ""
 
     if math_unstable and warn:
         verdict_text = "⚠️ Осторожно — нестабилен"
-        dev_action   = f"НЕ применять автоматически: stability={stability_score:.3f} < 0.5. Проверить вручную в {prog}"
-        biz_rec      = (
-            f"Система МАТЕМАТИЧЕСКИ НЕСТАБИЛЬНА (stability={stability_score:.3f}, "
-            f"survival_verified={survival_verified}). Результаты MGAP-матча ({resonance:.2f}) "
-            f"могут быть ненадёжными — артефакт требует пересмотра перед применением в {prog}."
+        dev_action   = (
+            f"НЕ применять автоматически: stability={stability_score:.3f}. "
+            f"Нарушения: {warns_str}. Проверить вручную в {prog}"
+        )
+        biz_rec = (
+            f"Система МАТЕМАТИЧЕСКИ НЕСТАБИЛЬНА (stability={stability_score:.3f}). "
+            f"Нарушения: {warns_str}. "
+            f"Результаты MGAP-матча ({resonance:.2f}) требуют пересмотра перед применением в {prog}."
         )
     elif math_unstable:
         verdict_text = "⚠️ Математически нестабилен"
         dev_action   = f"Применить с осторожностью: stability={stability_score:.3f}. Добавить мониторинг в {prog}"
         biz_rec      = (
             f"Артефакт резонирует с моделью «{model.get('name')}» (resonance={resonance:.2f}), "
-            f"однако математическая симуляция даёт stability={stability_score:.3f} < 0.5 "
-            f"и survival_verified={survival_verified}. Рекомендуется мониторинг, не автоматизация."
+            f"однако симуляция даёт stability={stability_score:.3f}. Рекомендуется мониторинг."
         )
     elif warn:
         verdict_text = "Применимо как расширение"
-        dev_action   = f"Добавить mgap_stability_monitor() в {prog}"
-        biz_rec      = (
-            f"Система НА ПОРОГЕ нестабильности. "
+        dev_action   = (
+            f"Добавить mgap_stability_monitor() в {prog}. "
+            f"Нарушения параметров артефакта: {warns_str}"
+        )
+        biz_rec = (
+            f"Система НА ПОРОГЕ нестабильности. Нарушения: {warns_str}. "
             f"Внедрить MGAP-монитор в {prog}. "
             f"Снижение риска каскадных отказов: 15–25%."
         )
     else:
         verdict_text = "Применимо, мониторинг"
         dev_action   = f"Добавить пассивный мониторинг порогов в {prog}"
-        biz_rec      = f"Система стабильна. Мониторинг порогов полезен профилактически."
+        biz_rec      = f"Все параметры в норме. Мониторинг порогов полезен профилактически."
 
     return {
         "verdict": verdict_text,
+        "artifact_checks": {
+            "K_ok":    artifact_calc.get("K_ok",   True),
+            "eta_ok":  artifact_calc.get("eta_ok", True),
+            "tau_ok":  artifact_calc.get("tau_ok", True),
+            "warnings": warns,
+        },
         "math_stability": {
             "stability_score":   stability_score,
             "survival_verified": survival_verified,
             "math_unstable":     math_unstable,
         },
         "for_developer": {
-            "action":          dev_action,
-            "code_reference":  "adaptation.code_snippet",
+            "action":           dev_action,
+            "code_reference":   "adaptation.code_snippet",
             "new_config_params": {
                 "eta_critical":   thresholds["eta_critical"],
                 "tau_robustness": thresholds["tau_robustness"],
@@ -479,7 +657,7 @@ def _build_verdict(model: Dict, calc: Dict, resonance: float, thresholds: Dict) 
                                   tau_max=thresholds["tau_robustness"],
                                   p_crit=0.37,
                                   p=0.52,
-              ),
+            ),
             "recommendation": biz_rec,
             "stability_score": stability_score,
             "estimated_roi":  (
@@ -610,7 +788,13 @@ class MGAPMatcher:
         blind_spot   = self._improve_blind_spot(raw_blind, model)
         code_snippet = _generate_code(model, thresholds, flat)
         calculation  = _calculate_example(model, thresholds)
-        verdict      = _build_verdict(model, calculation, resonance, thresholds)
+        artifact_calc    = _calculate_with_artifact_params(model, flat, thresholds)
+        verdict      = _build_verdict(model, calculation, artifact_calc, resonance, thresholds)
+
+        art_hypothesis = artifact.get("data", {}).get("gen", {}).get("hypothesis", "")
+        similarity_exp = _build_similarity_explanation(
+            model, flat, thresholds, art_hypothesis, resonance
+        )
 
         gen      = artifact.get("data", {}).get("gen", {})
         archivist = artifact.get("archivist") or {}
@@ -642,8 +826,10 @@ class MGAPMatcher:
                 "code_snippet": code_snippet,
                 "programs":     model.get("programs", []),
             },
-            "calculation":   calculation,
-            "verdict":       verdict,
+            "calculation":        calculation,
+            "artifact_check":     artifact_calc,
+            "similarity":         similarity_exp,
+            "verdict":            verdict,
             "generated_at":  __import__("datetime").datetime.utcnow().isoformat() + "Z",
         }
 

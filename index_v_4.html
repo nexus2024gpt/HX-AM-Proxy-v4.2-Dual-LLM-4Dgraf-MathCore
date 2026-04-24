@@ -929,6 +929,65 @@ function renderMgapMatch(m) {
           <div class="mgap-match-card-body" style="padding:.5rem .75rem;color:#94a3b8;font-size:.82rem">${escHtml(m.blind_spot || 'Нет данных')}</div>
         </div>
       </div>
+      ${(() => {
+        const ac = m.artifact_check || {};
+        const warns = ac.warnings || [];
+        const sim   = m.similarity || {};
+        const kws   = (sim.matching_keywords || []);
+        const prox  = (sim.param_proximity || []).filter(r => r.close);
+        const tier  = sim.resonance_tier || '';
+        const tierColor = tier==='высокий'?'#4ade80':tier==='средний'?'#f59e0b':'#ef4444';
+
+        const acHtml = `
+          <div class="mgap-match-card" style="margin-bottom:.75rem;border-left:3px solid ${warns.length?'#ef4444':'#4ade80'}">
+            <div class="mgap-match-card-head">
+              <span class="mgap-match-card-title">🔬 Проверка параметров артефакта</span>
+              <span style="margin-left:auto;font-size:.7rem;font-weight:700;color:${warns.length?'#ef4444':'#4ade80'}">
+                ${warns.length ? '⚠ '+warns.length+' нарушени'+(warns.length===1?'е':'й') : '✓ Всё в норме'}
+              </span>
+            </div>
+            <div class="mgap-match-card-body" style="padding:.5rem .75rem">
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.4rem;margin-bottom:.5rem">
+                ${[['K',ac.K_ok,\`\${ac.artifact_K} / min \${ac.model_K_min}\`],
+                   ['η',ac.eta_ok,\`\${ac.artifact_eta} / crit \${ac.model_eta_crit}\`],
+                   ['τ',ac.tau_ok,\`\${ac.artifact_tau} / crit \${ac.model_tau_crit}\`]].map(([k,ok,vals])=>\`
+                  <div style="background:#0f172a;border-radius:5px;padding:.35rem .5rem;border-left:2px solid \${ok?'#4ade80':'#ef4444'}">
+                    <div style="font-family:monospace;font-size:.72rem;font-weight:700;color:\${ok?'#4ade80':'#ef4444'}">\${k} \${ok?'✓':'✗'}</div>
+                    <div style="font-size:.65rem;color:#64748b">\${vals}</div>
+                  </div>\`).join('')}
+              </div>
+              \${warns.map(w=>\`<div style="font-size:.72rem;color:#f87171;padding:.2rem 0;border-bottom:1px solid #1e3a5f">⚠ \${escHtml(w)}</div>\`).join('')}
+            </div>
+          </div>
+
+          <div class="mgap-match-card" style="margin-bottom:.75rem">
+            <div class="mgap-match-card-head">
+              <span class="mgap-match-card-title">🔗 Почему похоже</span>
+              <span style="margin-left:auto;font-size:.68rem;color:\${tierColor}">резонанс \${tier}</span>
+            </div>
+            <div class="mgap-match-card-body" style="padding:.5rem .75rem">
+              \${kws.length ? \`<div style="margin-bottom:.4rem">
+                <span style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Ключевые слова</span><br>
+                \${kws.map(k=>\`<span style="display:inline-block;background:#6366f122;color:#818cf8;border-radius:3px;padding:.07rem .3rem;font-size:.68rem;margin:.1rem .15rem 0 0">\${escHtml(k)}</span>\`).join('')}
+              </div>\` : ''}
+              \${prox.length ? \`<div style="margin-top:.35rem">
+                <span style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Близкие параметры (≤25%)</span>
+                <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.2rem">
+                  \${prox.map(r=>\`<span style="background:#4ade8011;border:1px solid #4ade8033;color:#4ade80;border-radius:3px;padding:.1rem .4rem;font-size:.68rem;font-family:monospace">\${r.param}: \${r.artifact}↔\${r.model} (Δ\${r.delta_pct}%)</span>\`).join('')}
+                </div>
+              </div>\` : ''}
+              <div style="margin-top:.4rem;font-size:.72rem;color:#94a3b8">\${escHtml(sim.explanation_text||'')}</div>
+            </div>
+          </div>`;
+
+        const calcBlock = \`
+          <div class="mgap-match-card" style="margin-bottom:.75rem">
+            <div class="mgap-match-card-head"><span class="mgap-match-card-title">🧮 Расчёт на примере (реестр)</span></div>
+            <div class="mgap-match-card-body">\${calcHtml}</div>
+          </div>\`;
+
+        return acHtml + calcBlock;
+      })()}
       <div class="mgap-match-card" style="margin-bottom:.75rem">
         <div class="mgap-match-card-head"><span class="mgap-match-card-title">🧮 Расчёт на примере</span></div>
         <div class="mgap-match-card-body">${calcHtml}</div>
