@@ -629,23 +629,23 @@ select.f-input option{background:#1e293b}
         <span style="font-size:.72rem;color:#64748b" id="tracker-date">—</span>
         <div style="display:flex;gap:.5rem">
           <button class="cfg-btn" onclick="loadTrackerStats()">🔄 Обновить</button>
-          <button class="cfg-btn" onclick="resetStats('today')">↺ Сброс сегодня</button>
-          <button class="cfg-btn danger" onclick="resetStats('all')">🗑 Сбросить всё</button>
+          <button class="cfg-btn" onclick="resetStats('today')" title="Обнулить счётчики текущего дня">↺ Обнулить счётчики</button>
+          <button class="cfg-btn danger" onclick="resetStats('all')" title="Удалить всю историю запросов по всем провайдерам">🗑 Очистить историю</button>
         </div>
       </div>
       <div class="summary-cards">
-        <div class="s-card green"><div class="s-val" id="sc-req-today">—</div><div class="s-label">Запросов сегодня</div></div>
-        <div class="s-card blue"><div class="s-val" id="sc-tokens-today">—</div><div class="s-label">Токенов сегодня</div></div>
-        <div class="s-card red"><div class="s-val" id="sc-errors-today">—</div><div class="s-label">Ошибок сегодня</div></div>
+        <div class="s-card green"><div class="s-val" id="sc-req-today">—</div><div class="s-label">Запросов</div></div>
+        <div class="s-card blue"><div class="s-val" id="sc-tokens-today">—</div><div class="s-label">Токенов</div></div>
+        <div class="s-card red"><div class="s-val" id="sc-errors-today">—</div><div class="s-label">Ошибок</div></div>
         <div class="s-card yellow"><div class="s-val" id="sc-active">—</div><div class="s-label">Активных провайдеров</div></div>
       </div>
       <div class="t-section">
         <h4>🏦 По аккаунтам</h4>
-        <table class="t-table"><thead><tr><th>Провайдер</th><th>Аккаунт</th><th>Ключей</th><th>Запросов (день)</th><th>Токенов (день)</th><th>Ошибок (день)</th><th>Всего</th></tr></thead><tbody id="acc-table-body"></tbody></table>
+        <table class="t-table"><thead><tr><th>Провайдер</th><th>Аккаунт</th><th>Ключей</th><th>Запросов</th><th>Вх. токены</th><th>Исх. токены</th><th>Ошибки</th><th>Всего запросов</th></tr></thead><tbody id="acc-table-body"></tbody></table>
       </div>
       <div class="t-section">
         <h4>🔑 Детально по провайдерам</h4>
-        <table class="t-table"><thead><tr><th>Провайдер</th><th>Роль</th><th>Модель</th><th>Req (день)</th><th>Вх. токены</th><th>Исх. токены</th><th>Ошибки</th><th>Последний вызов</th><th>Статус</th></tr></thead><tbody id="prov-table-body"></tbody></table>
+        <table class="t-table"><thead><tr><th>Провайдер</th><th>Роль</th><th>Модель</th><th>Запросов</th><th>Вх. токены</th><th>Исх. токены</th><th>Ошибки</th><th>Последний вызов</th><th>Статус</th></tr></thead><tbody id="prov-table-body"></tbody></table>
       </div>
     </div>
     <div id="tracker-settings" class="tracker-tab-content">
